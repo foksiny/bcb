@@ -25,7 +25,7 @@ BCB is not just a language; it is a backend focused on simplicity, predictabilit
 ### Installation
 BCB is built with Python 3.6+. Install it in editable mode:
 ```bash
-git clone https://github.com/your-repo/bcb.git
+git clone https://github.com/foksiny/bcb.git
 cd bcb
 pip install -e .
 ```
