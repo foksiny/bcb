@@ -12,6 +12,7 @@ class CodeGen:
         self.structs = {}  # struct_name -> list of (field_type, field_name)
         self.struct_field_offsets = {}  # struct_name -> {field_name: offset}
         self.enums = {}  # enum_name -> {value_name: int_value}
+        self.current_func_end_label = None
 
     def new_label(self, prefix="L"):
         self.label_count += 1
@@ -166,6 +167,7 @@ class CodeGen:
     def gen_function(self, func):
         self.locals = {}
         self.next_local_offset = 0
+        self.current_func_end_label = self.new_label(f"E_{func.name}")
         
         if func.is_exported:
             self.output.append(f".globl {func.name}")
@@ -189,6 +191,7 @@ class CodeGen:
         for stmt in func.body:
             self.gen_statement(stmt)
 
+        self.output.append(f"{self.current_func_end_label}:")
         self.output.append("    add rsp, 64")
         self.output.append("    pop rbp")
         self.output.append("    ret")
@@ -198,6 +201,8 @@ class CodeGen:
             self.gen_call(stmt)
         elif isinstance(stmt, ReturnStmt):
             self.gen_expression(stmt.expr)
+            if self.current_func_end_label:
+                self.output.append(f"    jmp {self.current_func_end_label}")
 
         elif isinstance(stmt, VarDeclStmt):
             # Check if this is a struct type

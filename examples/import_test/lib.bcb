@@ -1,0 +1,8 @@
+<outtype: win64>
+
+check_value(value: int32) -> int32 {
+$if int32 value >= int32 1
+    return int32 1;
+$endif
+    return int32 0;
+}

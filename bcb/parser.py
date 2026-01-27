@@ -1,4 +1,5 @@
-from .lexer import TokenType
+import os
+from .lexer import tokenize, TokenType
 
 class ASTNode:
     pass
@@ -137,10 +138,12 @@ class CmpTStmt(ASTNode):
         self.target = target
 
 class Parser:
-    def __init__(self, tokens):
+    def __init__(self, tokens, base_dir=".", imported_files=None):
         self.tokens = tokens
         self.pos = 0
         self.enum_names = set()  # Track known enum names
+        self.base_dir = base_dir
+        self.imported_files = imported_files if imported_files is not None else set()
 
     def peek(self, offset=0):
         if self.pos + offset >= len(self.tokens):
@@ -180,6 +183,39 @@ class Parser:
                     declarations.append(self.parse_function_decl())
                 elif token.value == 'export':
                     declarations.append(self.parse_function_def(True))
+                elif token.value == 'import':
+                    self.consume() # import
+                    import_path = self.consume(TokenType.STRING).value
+                    self.consume(TokenType.SYMBOL, ';')
+                    
+                    full_path = os.path.abspath(os.path.join(self.base_dir, import_path))
+                    if full_path not in self.imported_files:
+                        self.imported_files.add(full_path)
+                        if os.path.exists(full_path):
+                            with open(full_path, 'r') as f:
+                                import_code = f.read()
+                            import_tokens = tokenize(import_code)
+                            import_parser = Parser(import_tokens, os.path.dirname(full_path), self.imported_files)
+                            import_program = import_parser.parse()
+                            
+                            # Merge declarations
+                            declarations.extend(import_program.declarations)
+                            
+                            # Merge data block
+                            if import_program.data_block:
+                                if not data_block:
+                                    data_block = DataBlock([], [], [])
+                                data_block.entries.extend(import_program.data_block.entries)
+                                data_block.structs.extend(import_program.data_block.structs)
+                                data_block.enums.extend(import_program.data_block.enums)
+                                # Also update enum_names from the imported parser
+                                self.enum_names.update(import_parser.enum_names)
+                            
+                            # Merge outtype if not already set
+                            if not outtype:
+                                outtype = import_program.outtype
+                        else:
+                            raise RuntimeError(f"Imported file not found: {full_path}")
                 else:
                     raise RuntimeError(f"Unexpected keyword {token.value}")
             elif token.type == TokenType.IDENTIFIER:

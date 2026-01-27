@@ -1,0 +1,16 @@
+<outtype: win64>
+// EXPECT: result: 1\n
+
+import "./lib.bcb";
+
+data {
+    string msg : "result: %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 result = call check_value(int32 1);
+    call printf(string msg, int32 result);
+    return int32 0;
+}

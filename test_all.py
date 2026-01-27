@@ -33,13 +33,14 @@ def parse_expected_output(bcb_file):
                 expected.append(part.replace("\\n", "\n"))
     return "\n".join(expected) if expected else None
 
-def test_file(bcb_path):
+def test_file(bcb_path, base_dir=""):
+    display_name = os.path.relpath(bcb_path, base_dir) if base_dir else os.path.basename(bcb_path)
     filename = os.path.basename(bcb_path)
     base_name = os.path.splitext(filename)[0]
     asm_path = f"{base_name}_temp.s"
     exe_path = f"{base_name}_temp.exe"
     
-    print(f"Testing {filename:20} ", end="", flush=True)
+    print(f"Testing {display_name:30} ", end="", flush=True)
     
     start_time = time.time()
     
@@ -97,6 +98,14 @@ def main():
     examples_dir = "examples"
     test_files = glob.glob(os.path.join(examples_dir, "*.bcb"))
     
+    # Check for subdirectories with main.bcb
+    for item in os.listdir(examples_dir):
+        item_path = os.path.join(examples_dir, item)
+        if os.path.isdir(item_path):
+            main_bcb = os.path.join(item_path, "main.bcb")
+            if os.path.exists(main_bcb):
+                test_files.append(main_bcb)
+    
     if not test_files:
         print(f"No .bcb files found in {examples_dir}")
         return
@@ -109,7 +118,7 @@ def main():
     total = len(test_files)
     
     for bcb_file in test_files:
-        if test_file(bcb_file):
+        if test_file(bcb_file, examples_dir):
             passed += 1
             
     print("=" * 50)

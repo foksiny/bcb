@@ -1,4 +1,5 @@
 import sys
+import os
 from bcb.lexer import tokenize
 from bcb.parser import Parser
 from bcb.codegen import CodeGen
@@ -19,8 +20,9 @@ def main():
         code = f.read()
 
     try:
+        abs_input = os.path.abspath(input_file)
         tokens = tokenize(code)
-        parser = Parser(tokens)
+        parser = Parser(tokens, os.path.dirname(abs_input), {abs_input})
         ast = parser.parse()
         codegen = CodeGen(ast)
         asm = codegen.generate()
