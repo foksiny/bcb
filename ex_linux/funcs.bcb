@@ -1,0 +1,20 @@
+<outtype: linux64>
+// EXPECT: a + b = 3
+
+data {
+    string msg : "a + b = %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 a = 1;
+    int32 b = 2;
+    int32 c = call sum(int32 a, int32 b);
+    call printf(string msg, int32 c);
+    return int32 0;
+}
+
+sum(a: int32, b: int32) -> int32 {
+    return int32 a + b;
+}

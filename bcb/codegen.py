@@ -13,6 +13,10 @@ class CodeGen:
         self.struct_field_offsets = {}  # struct_name -> {field_name: offset}
         self.enums = {}  # enum_name -> {value_name: int_value}
         self.current_func_end_label = None
+        # Target configuration
+        self.outtype = getattr(ast, "outtype", None) or "win64"
+        self.is_linux = self.outtype.lower() == "linux64"
+        self.is_windows = self.outtype.lower() == "win64"
 
     def new_label(self, prefix="L"):
         self.label_count += 1
@@ -84,7 +88,11 @@ class CodeGen:
         
         # Output the data section (strings and discovered float literals)
         if self.ast.data_block or self.float_literals:
-            self.output.append(".section .rdata,\"dr\"")
+            # Windows uses .rdata, Linux typically uses .rodata
+            if self.is_linux:
+                self.output.append(".section .rodata")
+            else:
+                self.output.append(".section .rdata,\"dr\"")
             if self.ast.data_block:
                 for type_name, name, value in self.ast.data_block.entries:
                     if type_name == 'string':
@@ -103,6 +111,10 @@ class CodeGen:
         # Output the text section
         self.output.append(".text")
         self.output.extend(functions_output)
+
+        # On Linux, emit a non-executable stack note to silence linker warnings
+        if self.is_linux:
+            self.output.append(".section .note.GNU-stack,\"\",@progbits")
 
         return "\n".join(self.output) + "\n"
 
@@ -177,7 +189,13 @@ class CodeGen:
         self.output.append("    mov rbp, rsp")
         self.output.append("    sub rsp, 64")
 
-        arg_regs = ["rcx", "rdx", "r8", "r9"]
+        # Calling convention: choose argument registers by target
+        if self.is_linux:
+            # System V AMD64: rdi, rsi, rdx, rcx, r8, r9
+            arg_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+        else:
+            # Windows x64: rcx, rdx, r8, r9
+            arg_regs = ["rcx", "rdx", "r8", "r9"]
         for i, (pname, ptype) in enumerate(func.params):
             self.next_local_offset += 8
             self.locals[pname] = (self.next_local_offset, ptype)
@@ -661,18 +679,26 @@ class CodeGen:
                 self.output.append("    cvtsd2ss xmm0, xmm0")
 
     def gen_call(self, expr):
-        arg_regs = ["rcx", "rdx", "r8", "r9"]
+        # Select integer argument registers based on target calling convention
+        if self.is_linux:
+            # System V AMD64
+            arg_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+        else:
+            # Windows x64
+            arg_regs = ["rcx", "rdx", "r8", "r9"]
         xmm_regs = ["xmm0", "xmm1", "xmm2", "xmm3"]
+
         for i, (arg_type, arg_expr) in enumerate(expr.args):
-            # For floats in variadic functions (like printf), they must be in both XMM and INT regs
+            # Floating-point arguments
             if arg_type in ['float32', 'float64']:
                 self.gen_expression(arg_expr, expected_type=arg_type)
-                # Convert float32 to float64 if passing to variadic function
+                # All variadic ABIs promote float to double, so ensure double in XMM
                 if arg_type == 'float32':
                     self.output.append("    cvtss2sd xmm0, xmm0")
                 if i < len(xmm_regs):
                     self.output.append(f"    movsd {xmm_regs[i]}, xmm0")
-                    # For variadic functions, we also copy the value to the GPR
+                # On Windows x64, variadic functions expect float values also mirrored in GPRs
+                if self.is_windows and i < len(arg_regs):
                     self.output.append(f"    movq {arg_regs[i]}, {xmm_regs[i]}")
             else:
                 # Non-float arguments: evaluate expression and pass the resulting value in an integer register.
@@ -685,7 +711,9 @@ class CodeGen:
                         self.output.append(f"    lea {arg_regs[i]}, [rip + {label}]")
                     else:
                         self.output.append(f"    mov {arg_regs[i]}, rax")
-        # Allocate shadow space (32 bytes) for Windows x64 ABI
-        self.output.append("    sub rsp, 32")
+        # Allocate shadow space (32 bytes) only for Windows x64 ABI
+        if self.is_windows:
+            self.output.append("    sub rsp, 32")
         self.output.append(f"    call {expr.name}")
-        self.output.append("    add rsp, 32")
+        if self.is_windows:
+            self.output.append("    add rsp, 32")

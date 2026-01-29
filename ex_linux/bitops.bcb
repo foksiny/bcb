@@ -1,0 +1,55 @@
+<outtype: linux64>
+// EXPECT: a & b = 0\na | b = 3\na ^ b = 3\n~a = -2\na << b = 4\na >> b = 0
+
+data {
+    string bitand : "a & b = %d\n"
+    string bitor : "a | b = %d\n"
+    string bitxor : "a ^ b = %d\n"
+    string bitnot : "~a = %d\n"
+    string bitlshift : "a << b = %d\n"
+    string bitrshift : "a >> b = %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 a = 1;
+    int32 b = 2;
+    int32 c = call bit_and(int32 a, int32 b);
+    int32 d = call bit_or(int32 a, int32 b);
+    int32 e = call bit_xor(int32 a, int32 b);
+    int32 f = call bit_not(int32 a);
+    int32 g = call bit_lshift(int32 a, int32 b);
+    int32 h = call bit_rshift(int32 a, int32 b);
+    call printf(string bitand, int32 c);
+    call printf(string bitor, int32 d);
+    call printf(string bitxor, int32 e);
+    call printf(string bitnot, int32 f);
+    call printf(string bitlshift, int32 g);
+    call printf(string bitrshift, int32 h);
+    return int32 0;
+}
+
+bit_and(a: int32, b: int32) -> int32 {
+    return int32 a & b;
+}
+
+bit_or(a: int32, b: int32) -> int32 {
+    return int32 a | b;
+}
+
+bit_xor(a: int32, b: int32) -> int32 {
+    return int32 a ^ b;
+}
+
+bit_not(a: int32) -> int32 {
+    return int32 ~a;
+}
+
+bit_lshift(a: int32, b: int32) -> int32 {
+    return int32 a << b;
+}
+
+bit_rshift(a: int32, b: int32) -> int32 {
+    return int32 a >> b;
+}

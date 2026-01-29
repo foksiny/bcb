@@ -1,0 +1,44 @@
+<outtype: linux64>
+// EXPECT: a = 10, b = 3\na + b = 13\na - b = 7\na * b = 30\na / b = 3\na % b = 1\na + b * a = 40\n(a + b) * a = 130
+
+data {
+    string math_test : "a = %d, b = %d\n"
+    string add : "a + b = %d\n"
+    string sub : "a - b = %d\n"
+    string mul : "a * b = %d\n"
+    string div : "a / b = %d\n"
+    string mod : "a %% b = %d\n"
+    string prec : "a + b * a = %d\n"
+    string parens : "(a + b) * a = %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 a = 10;
+    int32 b = 3;
+    call printf(string math_test, int32 a, int32 b);
+
+    int32 val_add = a + b;
+    call printf(string add, int32 val_add);
+
+    int32 val_sub = a - b;
+    call printf(string sub, int32 val_sub);
+
+    int32 val_mul = a * b;
+    call printf(string mul, int32 val_mul);
+
+    int32 val_div = a / b;
+    call printf(string div, int32 val_div);
+
+    int32 val_mod = a % b;
+    call printf(string mod, int32 val_mod);
+
+    int32 val_prec = a + b * a;
+    call printf(string prec, int32 val_prec);
+
+    int32 val_parens = (a + b) * a;
+    call printf(string parens, int32 val_parens);
+
+    return int32 0;
+}

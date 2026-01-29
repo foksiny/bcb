@@ -1,0 +1,23 @@
+<outtype: linux64>
+// EXPECT: less than
+
+data {
+    string big : "greater than\n"
+    string small : "less than\n"
+    string equal : "equal\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 a = 1;
+    int32 b = 2;
+$if int32 a > int32 b
+    call printf(string big);
+$elseif int32 a < int32 b
+    call printf(string small);
+$else
+    call printf(string equal);
+$endif
+    return int32 0;
+}

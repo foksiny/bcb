@@ -1,0 +1,22 @@
+<outtype: linux64>
+// EXPECT: x: 1, y: 2\nx: 3, y: 4
+
+data {
+    struct Point {
+        int32 x;
+        int32 y;
+    }
+    string fmt : "x: %d, y: %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    Point p = { x: int32 1, y: int32 2 };
+    call printf(string fmt, int32 p.x, int32 p.y);
+
+    md int32 p.x = int32 3;
+    md int32 p.y = int32 4;
+    call printf(string fmt, int32 p.x, int32 p.y);
+    return int32 0;
+}

@@ -94,10 +94,22 @@ def test_file(bcb_path, base_dir=""):
 def main():
     # Ensure bcb is in path if not installed
     sys.path.append(os.getcwd())
-    
-    examples_dir = "examples"
+
+    # Select example directory based on host OS
+    if sys.platform.startswith("win"):
+        examples_dir = "ex_windows"
+    elif sys.platform.startswith("linux"):
+        examples_dir = "ex_linux"
+    else:
+        # Fallback to original examples directory for other platforms
+        examples_dir = "examples"
+
+    if not os.path.isdir(examples_dir):
+        print(f"No example directory found for this OS: {examples_dir}")
+        return
+
     test_files = glob.glob(os.path.join(examples_dir, "*.bcb"))
-    
+
     # Check for subdirectories with main.bcb
     for item in os.listdir(examples_dir):
         item_path = os.path.join(examples_dir, item)

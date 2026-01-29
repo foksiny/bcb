@@ -1,0 +1,17 @@
+<outtype: linux64>
+// EXPECT: it 0\nit 1\nit 2\nit 3\nit 4\nit 5\nit 6\nit 7\nit 8\nit 9
+
+data {
+    string msg : "it %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 i = 0;
+$while int32 i < int32 10
+    call printf(string msg, int32 i);
+    md int32 i = i + 1;
+$endwhile
+    return int32 0;
+}

@@ -1,0 +1,23 @@
+<outtype: linux64>
+// EXPECT: Color: 0\nColor: 1
+
+data {
+    enum Color {
+        RED,
+        GREEN,
+        BLUE
+    }
+
+    string fmt : "Color: %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    Color c = Color.RED;
+    call printf(string fmt, int32 c); // Color: 0
+
+    md Color c = Color.GREEN;
+    call printf(string fmt, int32 c); // Color: 1
+    return int32 0;
+}
