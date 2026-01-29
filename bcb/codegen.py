@@ -13,6 +13,8 @@ class CodeGen:
         self.struct_field_offsets = {}  # struct_name -> {field_name: offset}
         self.enums = {}  # enum_name -> {value_name: int_value}
         self.current_func_end_label = None
+        self.functions = {} # name -> return_type
+        self.string_literals = {} # value -> label
         # Target configuration
         self.outtype = getattr(ast, "outtype", None) or "win64"
         self.is_linux = self.outtype.lower() == "linux64"
@@ -55,6 +57,11 @@ class CodeGen:
 
     def generate(self):
         self.output.append(".intel_syntax noprefix")
+
+        # 0. Process function declarations and definitions
+        for decl in self.ast.declarations:
+            if isinstance(decl, (FunctionDef, FunctionDecl)):
+                self.functions[decl.name] = decl.return_type
         
         # 0. Process struct definitions
         if self.ast.data_block and self.ast.data_block.structs:
@@ -87,7 +94,7 @@ class CodeGen:
         self.output = original_output
         
         # Output the data section (strings and discovered float literals)
-        if self.ast.data_block or self.float_literals:
+        if self.ast.data_block or self.float_literals or self.string_literals:
             # Windows uses .rdata, Linux typically uses .rodata
             if self.is_linux:
                 self.output.append(".section .rodata")
@@ -107,6 +114,11 @@ class CodeGen:
                     self.output.append(f"    .float {val}")
                 else:
                     self.output.append(f"    .double {val}")
+
+            for val, label in self.string_literals.items():
+                self.output.append(f"{label}:")
+                escaped_value = val.replace('"', '\\"')
+                self.output.append(f"    .asciz \"{escaped_value}\"")
             
         # Output the text section
         self.output.append(".text")
@@ -180,6 +192,7 @@ class CodeGen:
         self.locals = {}
         self.next_local_offset = 0
         self.current_func_end_label = self.new_label(f"E_{func.name}")
+        self.current_func_return_type = func.return_type
         
         if func.is_exported:
             self.output.append(f".globl {func.name}")
@@ -218,7 +231,11 @@ class CodeGen:
         if isinstance(stmt, CallExpr):
             self.gen_call(stmt)
         elif isinstance(stmt, ReturnStmt):
-            self.gen_expression(stmt.expr)
+            if stmt.return_type != 'void':
+                actual_type = self.gen_expression(stmt.expr, expected_type=stmt.return_type)
+                # Ensure it matches the function's declared return type
+                if hasattr(self, 'current_func_return_type') and self.current_func_return_type != actual_type:
+                    self.gen_conversion(actual_type, self.current_func_return_type)
             if self.current_func_end_label:
                 self.output.append(f"    jmp {self.current_func_end_label}")
 
@@ -453,7 +470,7 @@ class CodeGen:
                 final_type = 'float64' # Default for literal float
                 if expected_type == 'float32': final_type = 'float32'
                 
-                # If caller wants int, we have to load as float then convert? 
+                # If caller wants int, we have to load as float then convert?
                 # Or load int representation? LiteralExpr logic handles loading.
                 
                 # Let's rely on existing logic but adapted
@@ -483,6 +500,14 @@ class CodeGen:
                     self.gen_conversion('int64', expected_type)
                     return expected_type
                 return 'int64'
+            elif isinstance(expr.value, str):
+                # String literal
+                if expr.value not in self.string_literals:
+                    label = self.new_label("str_lit")
+                    self.string_literals[expr.value] = label
+                label = self.string_literals[expr.value]
+                self.output.append(f"    lea rax, [rip + {label}]")
+                return 'string'
 
         # 4. Handle VarRef
         elif isinstance(expr, VarRefExpr):
@@ -550,18 +575,13 @@ class CodeGen:
 
         # 5. Handle Calls
         elif isinstance(expr, CallExpr):
-            ret_type = self.gen_call(expr)
-            # gen_call should return the return type of function (not implemented yet, assuming int or passed?)
-            # For now, let's assume gen_call returns 'int32' unless defined otherwise.
-            # We need to look up function return type ideally. 
-            # Without symbol table for funcs, let's assume int32/rax default or 'void'.
-            # If expected_type is float, we might need conversion if call returns int.
-            # Limitation: We don't track func return types globally yet in this simple Codegen.
-            # Assume returns in RAX.
-            if expected_type in ['float32', 'float64']:
-                 self.gen_conversion('int64', expected_type)
+            self.gen_call(expr)
+            ret_type = self.functions.get(expr.name, 'int64')
+            
+            if expected_type is not None and expected_type != ret_type:
+                 self.gen_conversion(ret_type, expected_type)
                  return expected_type
-            return 'int64'
+            return ret_type
 
         # 6. Handle BinaryExpr
         elif isinstance(expr, BinaryExpr):

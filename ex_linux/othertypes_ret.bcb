@@ -1,0 +1,33 @@
+<outtype: linux64>
+// EXPECT: fl: 15.80\nint: 10\nstr: hello\n
+
+data {
+    string fmt1 : "fl: %.2f\n"
+    string fmt2 : "int: %d\n"
+    string fmt3 : "str: %s\n"
+}
+
+define printf(fmt: string, all: ...agrs) -> int32;
+
+export main(void) -> int32 {
+    float32 fl = call test_fl();
+    call printf(string fmt1, float32 fl);
+    int64 i = call test_int();
+    call printf(string fmt2, int64 i);
+    string s = call test_str();
+    call printf(string fmt3, string s);
+
+    return int32 0;
+}
+
+test_fl() -> float32 {
+    return float32 float32(10.4 + 5.4);
+}
+
+test_int() -> int64 {
+    return int64 10;
+}
+
+test_str() -> string {
+    return string "hello";
+}
