@@ -1,7 +1,7 @@
 # 🛠️ BCB: Basic Compiler Backend
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
-**BCB** (Basic Compiler Backend) is a minimalist yet powerful compiler designed to bridge the gap between human-readable high-level logic and native **Windows x64 assembly** (`.s`). BCB is't just a language; it's a backend system that gives you total control over the machine while providing the comfort of modern syntax.
+**BCB** (Basic Compiler Backend) is a minimalist yet powerful compiler designed to bridge the gap between human-readable high-level logic and native **Windows x64 assembly/Linux x86_64 assembly** (`.s`). BCB is't just a language; it's a backend system that gives you total control over the machine while providing the comfort of modern syntax.
 
 ---
 
@@ -31,7 +31,7 @@ BCB is built on the principle of **Deterministic Code Generation**.
 Every BCB program follows a strict, predictable layout. Understanding this layout is key to mastering the language.
 
 ```bcb
-<outtype: win64> // HEADER: Mandatory. Tells the backend to target Windows x64.
+<outtype: win64> // HEADER: Mandatory. Tells the backend to target Windows x64. (change to linux64 for linux target)
 
 data {           // STATIC SECTION: Where all constants and structures live.
     struct Point { int32 x; int32 y; }
