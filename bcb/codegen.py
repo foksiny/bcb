@@ -233,7 +233,34 @@ class CodeGen:
                     self.output.append(f"    mov [rbp - {self.next_local_offset}], rax")
 
         elif isinstance(stmt, VarAssignStmt):
-            expected_type = None # Default logic as requested
+            # Pointer mutation via: md int32* ptr = value;  =>  *ptr = value
+            if isinstance(stmt.type_name, str) and stmt.type_name.endswith('*'):
+                base_type = stmt.type_name[:-1]
+                if stmt.name in self.locals:
+                    ptr_offset, ptr_type = self.locals[stmt.name]
+                    # Load pointer value from local variable (use caller-saved register)
+                    self.output.append(f"    mov rdx, [rbp - {ptr_offset}]")
+                    actual_type = self.gen_expression(stmt.expr, expected_type=base_type if base_type else None)
+
+                    # Store into *ptr according to base_type
+                    if base_type == 'float32':
+                        self.gen_conversion(actual_type, 'float32')
+                        self.output.append("    movss [rdx], xmm0")
+                    elif base_type == 'float64':
+                        self.gen_conversion(actual_type, 'float64')
+                        self.output.append("    movsd [rdx], xmm0")
+                    elif base_type == 'int32':
+                        # Convert to int64 then store lower 32 bits
+                        self.gen_conversion(actual_type, 'int64')
+                        self.output.append("    mov dword ptr [rdx], eax")
+                    else:
+                        # Default to 64-bit store for int64, pointers, or unknown base
+                        self.gen_conversion(actual_type, 'int64')
+                        self.output.append("    mov qword ptr [rdx], rax")
+                return
+
+            # Regular variable assignment
+            expected_type = None  # Default logic as requested
             actual_type = self.gen_expression(stmt.expr, expected_type=None)
 
             if stmt.name in self.locals:
@@ -344,7 +371,40 @@ class CodeGen:
     def gen_expression(self, expr, expected_type=None):
         # 1. Handle UnaryExpr
         if isinstance(expr, UnaryExpr):
-            # Unary ops usually preserve type or imply int. 
+            # Address-of: &var  -> pointer to local variable
+            if expr.op == '&':
+                if isinstance(expr.expr, VarRefExpr) and expr.expr.name in self.locals:
+                    offset, t = self.locals[expr.expr.name]
+                    self.output.append(f"    lea rax, [rbp - {offset}]")
+                    # Represent pointer type as "<base>*" so size logic still treats it as int-like
+                    return f"{t}*"
+                else:
+                    raise RuntimeError("& operator is only supported on local variables")
+
+            # Dereference: *ptr  -> load value from address in rax
+            if expr.op == '*':
+                ptr_type = self.gen_expression(expr.expr, expected_type=None)
+                # Expect a pointer-like type string, e.g., "int32*"
+                base_type = None
+                if isinstance(ptr_type, str) and ptr_type.endswith('*'):
+                    base_type = ptr_type[:-1] or None
+
+                # Decide the target type to load as
+                target_type = expected_type or base_type or 'int64'
+
+                if target_type == 'float32':
+                    self.output.append("    movss xmm0, [rax]")
+                elif target_type == 'float64':
+                    self.output.append("    movsd xmm0, [rax]")
+                elif target_type == 'int32':
+                    # Sign-extend 32-bit int to 64-bit
+                    self.output.append("    movsxd rax, dword ptr [rax]")
+                else:
+                    # Default 64-bit load
+                    self.output.append("    mov rax, [rax]")
+                return target_type
+
+            # Other unary ops usually preserve type or imply int. 
             # For simplicity, let's defer to inner, currently only '~' (int)
             # If expected is None, assume int.
             req_type = expected_type if expected_type else 'int64'
@@ -615,7 +675,10 @@ class CodeGen:
                     # For variadic functions, we also copy the value to the GPR
                     self.output.append(f"    movq {arg_regs[i]}, {xmm_regs[i]}")
             else:
+                # Non-float arguments: evaluate expression and pass the resulting value in an integer register.
+                # This naturally supports pointers (e.g., int32*, void*) as plain 64-bit values.
                 self.gen_expression(arg_expr, expected_type=arg_type)
+
                 if i < len(arg_regs):
                     if arg_type == 'string' and isinstance(arg_expr, VarRefExpr) and arg_expr.name in self.data_labels:
                         label = self.data_labels[arg_expr.name]

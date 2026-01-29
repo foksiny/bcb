@@ -68,6 +68,58 @@ float64 price = 99.99;
 string label = "Inventory Item";
 ```
 
+### Pointers & Addressing
+BCB supports **typed pointers** to stack variables, with explicit address-of and dereference operations.
+
+- **Pointer declaration**
+  ```bcb
+  int32  x   = 1;
+  int32* px  = &x;   // px points to x
+  ```
+
+- **Address-of (`&`)**
+  - `&var` evaluates to the address of a local variable.
+  - Result type is `<base_type>*` (e.g., `int32*`).
+
+- **Dereference (`*`)**
+  - `*ptr` loads the value from the address contained in `ptr`.
+  - Example:
+    ```bcb
+    int32  x   = 1;
+    int32* px  = &x;
+    int32  y   = *px;   // y = 1
+    ```
+
+- **Passing pointers to functions**
+  ```bcb
+  // Pointer parameter (like int32* in C)
+  change(ptr: int32*) -> void {
+      // Overwrite the pointee: *ptr = 2;
+      md int32* ptr = 2;
+      return void;
+  }
+
+  export main(void) -> int32 {
+      int32 a   = 1;
+      int32* p  = &a;
+
+      // Pass the pointer itself to the function (NOT *p)
+      call change(int32 p);
+
+      // a was modified through the pointer
+      call printf(string "%d\n", int32 a);  // prints 2
+      return int32 0;
+  }
+  ```
+
+- **Pointers in calls vs. values**
+  - `int32* p` in a **declaration** or parameter type means "pointer to int32".
+  - In a **call**, the type before the expression describes the expected base type:
+    - `call change(int32 p);` → passes the pointer value `p` into `ptr: int32*`.
+    - `call printf(string fmt, int32* p);` → passes the **value pointed to by** `p` (because of the `*` in the expression).
+
+BCB treats pointers as 64‑bit integers at the ABI level (Windows x64), so they are passed and returned in the standard integer registers (`RCX`, `RDX`, `R8`, `R9`, `RAX`) just like `int64`.
+
 ---
 
 ## 4. The Mutation System (md)

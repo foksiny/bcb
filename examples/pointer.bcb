@@ -1,0 +1,25 @@
+<outtype: win64>
+
+data {
+    string msg : "%d\n"
+    string msg2 : "ptr: %p\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 a = 1;
+    int32* ptr = &a;
+    call printf(string msg, int32* ptr);
+    call printf(string msg2, int32 ptr);
+    // Pass the pointer itself into change so it can modify 'a'
+    call change(int32 ptr);
+    call printf(string msg, int32* ptr);
+    call printf(string msg2, int32 ptr);
+    return int32 0;
+}
+
+change(ptr: int32*) -> void {
+    md int32* ptr = 2;
+    return void;
+}

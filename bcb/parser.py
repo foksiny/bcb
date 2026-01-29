@@ -285,7 +285,14 @@ class Parser:
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, '-')
         self.consume(TokenType.SYMBOL, '>')
-        return_type = self.consume(TokenType.KEYWORD).value
+        # Return type (allow identifiers for structs/enums and pointer suffixes)
+        type_token = self.peek()
+        if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+            raise RuntimeError(f"Expected return type, got {type_token.type} at line {type_token.line}")
+        return_type = self.consume().value
+        while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+            self.consume()
+            return_type += '*'
         self.consume(TokenType.SYMBOL, ';')
         return FunctionDecl(name, params, return_type)
 
@@ -298,7 +305,14 @@ class Parser:
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, '-')
         self.consume(TokenType.SYMBOL, '>')
-        return_type = self.consume(TokenType.KEYWORD).value
+        # Return type (allow identifiers and pointer suffixes)
+        type_token = self.peek()
+        if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+            raise RuntimeError(f"Expected return type, got {type_token.type} at line {type_token.line}")
+        return_type = self.consume().value
+        while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+            self.consume()
+            return_type += '*'
         self.consume(TokenType.SYMBOL, '{')
         body = []
         while self.peek().type != TokenType.SYMBOL or self.peek().value != '}':
@@ -328,7 +342,15 @@ class Parser:
                 else:
                     type_name = "..."
             else:
-                type_name = self.consume(TokenType.KEYWORD).value
+                # Base type (keyword or identifier, e.g., int32, MyStruct)
+                type_token = self.peek()
+                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                    raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+                type_name = self.consume().value
+                # Optional pointer suffix(es), e.g., int32*, MyStruct**
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
             params.append((name, type_name))
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()
@@ -359,6 +381,10 @@ class Parser:
                 if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
                 type_name = self.consume().value
+                # Optional pointer suffixes for md (e.g., md int32* ptr = 2;)
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
                 name = self.consume(TokenType.IDENTIFIER).value
                 
                 # Check if it's a field assignment (var.field)
@@ -394,7 +420,11 @@ class Parser:
                 self.consume(TokenType.SYMBOL, ';')
                 return CmpTStmt(cond, target)
             elif token.value in ['int32', 'int64', 'float32', 'float64', 'string']:
+                # Variable declaration, including pointer types (e.g., int32* ptr)
                 type_name = self.consume().value
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
                 name = self.consume(TokenType.IDENTIFIER).value
                 self.consume(TokenType.SYMBOL, '=')
                 expr = self.parse_expression()
@@ -432,7 +462,7 @@ class Parser:
                 lhs = TypeCastExpr(type_name, rhs)
             return self.parse_op_continuation(lhs, min_prec)
             
-        elif token.type == TokenType.SYMBOL and token.value == '~':
+        elif token.type == TokenType.SYMBOL and token.value in ['~', '&', '*']:
             op = self.consume().value
             rhs = self.parse_expression(11) # High precedence
             lhs = UnaryExpr(op, rhs)
@@ -524,7 +554,11 @@ class Parser:
             self.consume(TokenType.SYMBOL, '(')
             args = []
             while self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
-                arg_type = self.consume(TokenType.KEYWORD).value
+                # Argument type (base keyword or identifier; pointer/deref handled in expression)
+                type_token = self.peek()
+                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                    raise RuntimeError(f"Expected argument type, got {type_token.type} at line {type_token.line}")
+                arg_type = self.consume().value
                 arg_expr = self.parse_expression()
                 args.append((arg_type, arg_expr))
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
@@ -580,7 +614,11 @@ class Parser:
         self.consume(TokenType.SYMBOL, '(')
         args = []
         while self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
-            arg_type = self.consume(TokenType.KEYWORD).value
+            # Argument type (base keyword or identifier; pointer/deref handled in expression)
+            type_token = self.peek()
+            if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                raise RuntimeError(f"Expected argument type, got {type_token.type} at line {type_token.line}")
+            arg_type = self.consume().value
             arg_expr = self.parse_expression()
             args.append((arg_type, arg_expr))
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
