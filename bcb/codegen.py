@@ -585,37 +585,105 @@ class CodeGen:
 
         # 6. Handle BinaryExpr
         elif isinstance(expr, BinaryExpr):
-            # If expected_type is float, do float math.
-            # If expected_type is None or Int, do INT math (forcing children to Int).
+            is_comparison = expr.op in ['==', '!=', '<', '>', '<=', '>=']
             
-            is_float_op = expected_type in ['float32', 'float64']
-            target_type = expected_type if is_float_op else 'int64'
+            # Determine expected type for LHS
+            # For comparisons, we do not impose the result type (int/bool) on the operands.
+            # For arithmetic, we propagate expected_type if available.
+            lhs_expected = None if is_comparison else expected_type
+
+            # Generate LHS
+            # This returns the actual type of the left operand
+            left_type = self.gen_expression(expr.left, expected_type=lhs_expected)
             
-            # LHS
-            self.gen_expression(expr.left, expected_type=target_type)
+            # Determine if we are doing float operation based on LHS or if explicitly requested
+            is_float_op = left_type in ['float32', 'float64']
+            
+            # RHS Expected Type
+            # If float op, we want RHS to match float type. 
+            # If int op, we default to int64 (or lhs_expected if it was an int type, but defaulting to int64 covers all)
+            rhs_expected = left_type if is_float_op else (lhs_expected if lhs_expected else 'int64')
             
             if is_float_op:
+                # Float Op
                 self.output.append("    sub rsp, 16")
-                self.output.append("    movsd [rsp], xmm0")
-                # RHS
-                self.gen_expression(expr.right, expected_type=target_type)
-                self.output.append("    movsd xmm1, xmm0")
-                self.output.append("    movsd xmm0, [rsp]")
+                if left_type == 'float32':
+                    self.output.append("    movss [rsp], xmm0")
+                else:
+                    self.output.append("    movsd [rsp], xmm0")
+                
+                # Generate RHS
+                self.gen_expression(expr.right, expected_type=rhs_expected)
+                
+                # Move RHS to xmm1, restore LHS to xmm0
+                if left_type == 'float32':
+                    self.output.append("    movss xmm1, xmm0")
+                    self.output.append("    movss xmm0, [rsp]")
+                else:
+                    self.output.append("    movsd xmm1, xmm0")
+                    self.output.append("    movsd xmm0, [rsp]")
+                
                 self.output.append("    add rsp, 16")
                 
-                if expr.op == '+':
-                    if target_type == 'float32': self.output.append("    addss xmm0, xmm1")
-                    else: self.output.append("    addsd xmm0, xmm1")
-                elif expr.op == '-':
-                    if target_type == 'float32': self.output.append("    subss xmm0, xmm1")
-                    else: self.output.append("    subsd xmm0, xmm1")
-                elif expr.op == '*':
-                    if target_type == 'float32': self.output.append("    mulss xmm0, xmm1")
-                    else: self.output.append("    mulsd xmm0, xmm1")
-                elif expr.op == '/':
-                    if target_type == 'float32': self.output.append("    divss xmm0, xmm1")
-                    else: self.output.append("    divsd xmm0, xmm1")
-                return target_type
+                if is_comparison:
+                    if left_type == 'float32':
+                        self.output.append("    ucomiss xmm0, xmm1")
+                    else:
+                        self.output.append("    ucomisd xmm0, xmm1")
+                    
+                    # Set AL based on flags
+                    # ucomiss sets ZF,PF,CF.
+                    # Equal: ZF=1, PF=0 (Unordered sets PF=1)
+                    
+                    if expr.op == '==':
+                        # Check (ZF=1 AND PF=0)
+                        self.output.append("    setnp al") # PF=0
+                        self.output.append("    sete bl")  # ZF=1
+                        self.output.append("    and al, bl")
+                        
+                    elif expr.op == '!=':
+                        # Check (ZF=0 OR PF=1)
+                        self.output.append("    setp al")
+                        self.output.append("    setne bl")
+                        self.output.append("    or al, bl")
+                        
+                    elif expr.op == '<':
+                        self.output.append("    seta al") # Wait, xmm0 < xmm1 -> CF=1 (below). 'seta' is above.
+                        # Intel syntax: ucomiss src, dest ?? No, ucomiss op1, op2.
+                        # cmp op1, op2. op1 < op2 -> carry (below).
+                        # ucomiss xmm0, xmm1.
+                        # if xmm0 < xmm1 -> CF=1.
+                        self.output.append("    setb al")
+                        
+                    elif expr.op == '>':
+                        self.output.append("    seta al")
+                        
+                    elif expr.op == '<=':
+                        self.output.append("    setbe al")
+                        
+                    elif expr.op == '>=':
+                        self.output.append("    setae al")
+                        
+                    self.output.append("    movzx rax, al")
+                    return 'int64'
+                
+                else:
+                    # Arithmetic
+                    if expr.op == '+':
+                        if left_type == 'float32': self.output.append("    addss xmm0, xmm1")
+                        else: self.output.append("    addsd xmm0, xmm1")
+                    elif expr.op == '-':
+                        if left_type == 'float32': self.output.append("    subss xmm0, xmm1")
+                        else: self.output.append("    subsd xmm0, xmm1")
+                    elif expr.op == '*':
+                        if left_type == 'float32': self.output.append("    mulss xmm0, xmm1")
+                        else: self.output.append("    mulsd xmm0, xmm1")
+                    elif expr.op == '/':
+                        if left_type == 'float32': self.output.append("    divss xmm0, xmm1")
+                        else: self.output.append("    divsd xmm0, xmm1")
+                    
+                    return left_type
+            
             else:
                 # Int Math
                 self.output.append("    push rax")
