@@ -14,6 +14,7 @@ class CodeGen:
         self.enums = {}  # enum_name -> {value_name: int_value}
         self.current_func_end_label = None
         self.functions = {} # name -> return_type
+        self.function_params = {} # name -> params list
         self.string_literals = {} # value -> label
         # Target configuration
         self.outtype = getattr(ast, "outtype", None) or "win64"
@@ -62,6 +63,7 @@ class CodeGen:
         for decl in self.ast.declarations:
             if isinstance(decl, (FunctionDef, FunctionDecl)):
                 self.functions[decl.name] = decl.return_type
+                self.function_params[decl.name] = decl.params
         
         # 0. Process struct definitions
         if self.ast.data_block and self.ast.data_block.structs:
@@ -204,20 +206,54 @@ class CodeGen:
 
         # Calling convention: choose argument registers by target
         if self.is_linux:
-            # System V AMD64: rdi, rsi, rdx, rcx, r8, r9
-            arg_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+            # System V AMD64: rdi, rsi, rdx, rcx, r8, r9 for ints
+            # xmm0-xmm7 for floats
+            int_arg_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+            float_arg_regs = [f"xmm{i}" for i in range(8)]
+            int_arg_idx = 0
+            float_arg_idx = 0
         else:
-            # Windows x64: rcx, rdx, r8, r9
+            # Windows x64: rcx, rdx, r8, r9 shared
             arg_regs = ["rcx", "rdx", "r8", "r9"]
+            float_arg_regs = ["xmm0", "xmm1", "xmm2", "xmm3"]
+        
         for i, (pname, ptype) in enumerate(func.params):
             self.next_local_offset += 8
             self.locals[pname] = (self.next_local_offset, ptype)
-            if i < len(arg_regs):
-                self.output.append(f"    mov [rbp - {self.next_local_offset}], {arg_regs[i]}")
+            
+            is_float = ptype in ['float32', 'float64']
+            
+            if self.is_linux:
+                if is_float:
+                    if float_arg_idx < len(float_arg_regs):
+                        reg = float_arg_regs[float_arg_idx]
+                        if ptype == 'float32':
+                            self.output.append(f"    movss [rbp - {self.next_local_offset}], {reg}")
+                        else:
+                            self.output.append(f"    movsd [rbp - {self.next_local_offset}], {reg}")
+                        float_arg_idx += 1
+                    else:
+                        pass # TODO: Implement Linux stack args
+                else:
+                    if int_arg_idx < len(int_arg_regs):
+                        self.output.append(f"    mov [rbp - {self.next_local_offset}], {int_arg_regs[int_arg_idx]}")
+                        int_arg_idx += 1
+                    else:
+                        pass # TODO: Stack args
             else:
-                stack_offset = 16 + (i - 4) * 8
-                self.output.append(f"    mov rax, [rbp + {stack_offset}]")
-                self.output.append(f"    mov [rbp - {self.next_local_offset}], rax")
+                # Windows
+                if i < len(arg_regs):
+                    if is_float:
+                         if ptype == 'float32':
+                             self.output.append(f"    movss [rbp - {self.next_local_offset}], {float_arg_regs[i]}")
+                         else:
+                             self.output.append(f"    movsd [rbp - {self.next_local_offset}], {float_arg_regs[i]}")
+                    else:
+                        self.output.append(f"    mov [rbp - {self.next_local_offset}], {arg_regs[i]}")
+                else:
+                    stack_offset = 48 + (i - 4) * 8
+                    self.output.append(f"    mov rax, [rbp + {stack_offset}]")
+                    self.output.append(f"    mov [rbp - {self.next_local_offset}], rax")
 
         for stmt in func.body:
             self.gen_statement(stmt)
@@ -767,38 +803,104 @@ class CodeGen:
                 self.output.append("    cvtsd2ss xmm0, xmm0")
 
     def gen_call(self, expr):
+        func_params = self.function_params.get(expr.name)
+
         # Select integer argument registers based on target calling convention
         if self.is_linux:
             # System V AMD64
-            arg_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+            int_arg_regs = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+            float_arg_regs = [f"xmm{i}" for i in range(8)]
+            int_arg_idx = 0
+            float_arg_idx = 0
+            
+            for i, (arg_type, arg_expr) in enumerate(expr.args):
+                is_float = arg_type in ['float32', 'float64']
+                
+                # Determine promotion for float32
+                should_promote = False
+                if arg_type == 'float32':
+                    if func_params is None:
+                        should_promote = True
+                    elif i >= len(func_params):
+                        should_promote = True
+                    else:
+                        _, param_type = func_params[i]
+                        if param_type.startswith('...'):
+                            should_promote = True
+                
+                if is_float:
+                    self.gen_expression(arg_expr, expected_type=arg_type)
+                    
+                    if should_promote:
+                        self.output.append("    cvtss2sd xmm0, xmm0")
+                        
+                    # Pass in XMM register
+                    if float_arg_idx < len(float_arg_regs):
+                        reg = float_arg_regs[float_arg_idx]
+                        if arg_type == 'float32' and not should_promote:
+                            self.output.append(f"    movss {reg}, xmm0")
+                        else:
+                            # float64 or promoted float32
+                            self.output.append(f"    movsd {reg}, xmm0")
+                        float_arg_idx += 1
+                else:
+                    self.gen_expression(arg_expr, expected_type=arg_type)
+                    # Pass in Integer register
+                    if int_arg_idx < len(int_arg_regs):
+                        reg = int_arg_regs[int_arg_idx]
+                        if arg_type == 'string' and isinstance(arg_expr, VarRefExpr) and arg_expr.name in self.data_labels:
+                            label = self.data_labels[arg_expr.name]
+                            self.output.append(f"    lea {reg}, [rip + {label}]")
+                        else:
+                            self.output.append(f"    mov {reg}, rax")
+                        int_arg_idx += 1
+                        
+            # For varargs (like printf), AL must contain number of vector registers used (Linux ABI)
+            self.output.append(f"    mov al, {float_arg_idx}")
+            
         else:
             # Windows x64
             arg_regs = ["rcx", "rdx", "r8", "r9"]
-        xmm_regs = ["xmm0", "xmm1", "xmm2", "xmm3"]
-
-        for i, (arg_type, arg_expr) in enumerate(expr.args):
-            # Floating-point arguments
-            if arg_type in ['float32', 'float64']:
-                self.gen_expression(arg_expr, expected_type=arg_type)
-                # All variadic ABIs promote float to double, so ensure double in XMM
+            float_arg_regs = ["xmm0", "xmm1", "xmm2", "xmm3"]
+            
+            for i, (arg_type, arg_expr) in enumerate(expr.args):
+                is_float = arg_type in ['float32', 'float64']
+                
+                # Determine promotion for float32
+                should_promote = False
                 if arg_type == 'float32':
-                    self.output.append("    cvtss2sd xmm0, xmm0")
-                if i < len(xmm_regs):
-                    self.output.append(f"    movsd {xmm_regs[i]}, xmm0")
-                # On Windows x64, variadic functions expect float values also mirrored in GPRs
-                if self.is_windows and i < len(arg_regs):
-                    self.output.append(f"    movq {arg_regs[i]}, {xmm_regs[i]}")
-            else:
-                # Non-float arguments: evaluate expression and pass the resulting value in an integer register.
-                # This naturally supports pointers (e.g., int32*, void*) as plain 64-bit values.
-                self.gen_expression(arg_expr, expected_type=arg_type)
-
-                if i < len(arg_regs):
-                    if arg_type == 'string' and isinstance(arg_expr, VarRefExpr) and arg_expr.name in self.data_labels:
-                        label = self.data_labels[arg_expr.name]
-                        self.output.append(f"    lea {arg_regs[i]}, [rip + {label}]")
+                    if func_params is None:
+                        should_promote = True
+                    elif i >= len(func_params):
+                        should_promote = True
                     else:
-                        self.output.append(f"    mov {arg_regs[i]}, rax")
+                        _, param_type = func_params[i]
+                        if param_type.startswith('...'):
+                            should_promote = True
+
+                if is_float:
+                    self.gen_expression(arg_expr, expected_type=arg_type)
+                    
+                    if should_promote:
+                        self.output.append("    cvtss2sd xmm0, xmm0")
+
+                    if i < len(float_arg_regs):
+                        if arg_type == 'float32' and not should_promote:
+                             self.output.append(f"    movss {float_arg_regs[i]}, xmm0")
+                        else:
+                             self.output.append(f"    movsd {float_arg_regs[i]}, xmm0")
+                        
+                        # Windows Variadic: Mirror float in GPR
+                        self.output.append(f"    movq {arg_regs[i]}, xmm0")
+                else:
+                    self.gen_expression(arg_expr, expected_type=arg_type)
+                    if i < len(arg_regs):
+                        if arg_type == 'string' and isinstance(arg_expr, VarRefExpr) and arg_expr.name in self.data_labels:
+                            label = self.data_labels[arg_expr.name]
+                            self.output.append(f"    lea {arg_regs[i]}, [rip + {label}]")
+                        else:
+                            self.output.append(f"    mov {arg_regs[i]}, rax")
+
         # Allocate shadow space (32 bytes) only for Windows x64 ABI
         if self.is_windows:
             self.output.append("    sub rsp, 32")

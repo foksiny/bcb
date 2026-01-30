@@ -1,0 +1,51 @@
+<outtype: linux64>
+// EXPECT: true\ntrue\ntrue\ntrue\n
+
+data {
+    string msg1 : "true\n"
+    string msg2 : "false\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    call cmp_flt32(float32 10.5, float32 10.5);
+    call cmp_flt64(float64 10.5, float64 10.5);
+    call cmp_int64(int64 10, int64 10);
+    string a = "hello";
+    string b = "hello";
+    call cmp_str(string a, string b);
+    return int32 0;
+}
+
+cmp_flt32(a: float32, b: float32) -> void {
+$if float32 a == float32 b
+    call printf(string msg1);
+$else
+    call printf(string msg2);
+$endif
+}
+
+cmp_flt64(a: float64, b: float64) -> void {
+$if float64 a == float64 b
+    call printf(string msg1);
+$else
+    call printf(string msg2);
+$endif
+}
+
+cmp_int64(a: int64, b: int64) -> void {
+$if int64 a == int64 b
+    call printf(string msg1);
+$else
+    call printf(string msg2);
+$endif
+}
+
+cmp_str(a: string, b: string) -> void {
+$if string a == string b
+    call printf(string msg1);
+$else
+    call printf(string msg2);
+$endif
+}
