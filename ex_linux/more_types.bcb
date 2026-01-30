@@ -1,0 +1,37 @@
+<outtype: linux64>
+// EXPECT: 10\n10\ntrue\ntrue\n
+data {
+    string msg : "%d\n"
+    string true : "true\n"
+    string false : "false\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+get_int8(void) -> int8 {
+    return int8 10;
+}
+
+get_int16(void) -> int16 {
+    return int16 10;
+}
+
+export main(void) -> int32 {
+    int8 a = call get_int8();
+    call printf(string msg, int8 a);
+    int16 b = call get_int16();
+    call printf(string msg, int16 b);
+
+    $if int8 a == int8 10
+        call printf(string true);
+    $else
+        call printf(string false);
+    $endif
+
+    $if int16 b == int16 10
+        call printf(string true);
+    $else
+        call printf(string false);
+    $endif
+    return int32 0;
+}

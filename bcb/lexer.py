@@ -4,13 +4,14 @@ class TokenType:
     IDENTIFIER = 'IDENTIFIER'
     KEYWORD = 'KEYWORD'
     STRING = 'STRING'
+    CHAR = 'CHAR'
     NUMBER = 'NUMBER'
     SYMBOL = 'SYMBOL'
     LABEL = 'LABEL'
     EOF = 'EOF'
 
 KEYWORDS = {
-    'outtype', 'data', 'string', 'define', 'export', 'void', 'int32', 'int64', 'float32', 'float64', 'call', 'return',
+    'outtype', 'data', 'string', 'define', 'export', 'void', 'int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'char', 'call', 'return',
     '$if', '$elseif', '$else', '$endif',
     '$while', '$endwhile', 'md',
     'jmp', 'ifn', 'cmp_t',
@@ -19,6 +20,7 @@ KEYWORDS = {
 
 TOKEN_SPEC = [
     ('STRING', r'"[^"]*"'),
+    ('CHAR', r"'(\\.|[^'])'"),
     ('LABEL', r'@[a-zA-Z_][a-zA-Z0-9_]*'),
     ('COMMENT', r'//.*'),
     ('NUMBER', r'\d+\.\d+|\d+'),
@@ -50,6 +52,16 @@ def tokenize(code):
         column = mo.start() - line_start
         if kind == 'STRING':
             tokens.append(Token(TokenType.STRING, value[1:-1], line_num, column))
+        elif kind == 'CHAR':
+            content = value[1:-1]
+            if content.startswith('\\') and len(content) > 1:
+                # Simple escape handling
+                escapes = {'n': '\n', 't': '\t', 'r': '\r', '0': '\0', '\\': '\\', "'": "'", '"': '"'}
+                char_val = escapes.get(content[1], content[1])
+            else:
+                char_val = content
+            # Store as integer value of the char
+            tokens.append(Token(TokenType.CHAR, ord(char_val), line_num, column))
         elif kind == 'NUMBER':
             val = value
             if '.' in val:

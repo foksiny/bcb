@@ -25,13 +25,24 @@ def parse_expected_output(bcb_file):
     Format: // EXPECT: Some Output\nSecond Line
     """
     expected = []
+    expected_error = []
+    expected_pre = []
+    
     with open(bcb_file, 'r') as f:
         for line in f:
             if "// EXPECT:" in line:
                 # Replace literal \n with actual newline character
                 part = line.split("// EXPECT:")[1].strip()
                 expected.append(part.replace("\\n", "\n"))
-    return "\n".join(expected) if expected else None
+            elif "// EXPECT_ERROR:" in line:
+                part = line.split("// EXPECT_ERROR:")[1].strip()
+                expected_error.append(part)
+            elif "// EXPECT_PRE:" in line:
+                part = line.split("// EXPECT_PRE:")[1].strip()
+                expected_pre.append(part)
+                
+    expected_str = "\n".join(expected) if expected else None
+    return expected_str, expected_error, expected_pre
 
 def test_file(bcb_path, base_dir=""):
     display_name = os.path.relpath(bcb_path, base_dir) if base_dir else os.path.basename(bcb_path)
@@ -44,14 +55,57 @@ def test_file(bcb_path, base_dir=""):
     
     start_time = time.time()
     
+    # Parse expectations
+    expected, expected_errors, expected_pres = parse_expected_output(bcb_path)
+
     # 1. Compile to Assembly
     # We use -m bcb.main to run the package logic
     stdout, stderr, code = run_command([sys.executable, "-m", "bcb.main", bcb_path, "-o", asm_path])
+    
+    # Check for EXPECT_ERROR
+    if expected_errors:
+        if code != 0:
+            # Compilation failed as expected, check error message
+            # The compiler prints "Compilation failed due to errors." in stdout for managed errors
+            # and diagnostics in stdout/stderr
+            combined_output = stdout + stderr
+            all_found = True
+            for err in expected_errors:
+                if err not in combined_output:
+                    print(f"[{RED}FAILED{RESET}] (Missing Error)")
+                    print(f"  Expected Error: {repr(err)}")
+                    print(f"  Got Output:     {repr(combined_output)}")
+                    all_found = False
+                    break
+            if all_found:
+                 print(f"[{GREEN}PASSED{RESET}] (Error Received) ({time.time() - start_time:.2f}s)")
+                 return True
+            return False
+            
+        else:
+            print(f"[{RED}FAILED{RESET}] (Unexpected Success)")
+            print(f"  Expected compilation error but succeeded.")
+            return False
+
     if code != 0:
         print(f"[{RED}FAILED{RESET}] (Compilation)")
         print(f"  Error: {stderr or stdout}")
         return False
-    
+        
+    # Check for EXPECT_PRE (Warnings/PREs but compilation succeeds)
+    if expected_pres:
+        combined_output = stdout + stderr # Analyzer output is in stdout usually
+        all_found = True
+        for pre in expected_pres:
+            if pre not in combined_output:
+                print(f"[{RED}FAILED{RESET}] (Missing PRE)")
+                print(f"  Expected PRE: {repr(pre)}")
+                print(f"  Got Output:   {repr(combined_output)}")
+                all_found = False
+                break
+        if not all_found:
+            return False
+
     # 2. Assemble and Link with GCC
     stdout, stderr, code = run_command(["gcc", asm_path, "-o", exe_path])
     if code != 0:
@@ -77,7 +131,6 @@ def test_file(bcb_path, base_dir=""):
         return False
     
     # 5. Check Output (Optional: if EXPECT comments exist)
-    expected = parse_expected_output(bcb_path)
     if expected is not None:
         if expected.strip() == stdout.strip():
             print(f"[{GREEN}PASSED{RESET}] ({duration:.2f}s)")

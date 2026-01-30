@@ -41,6 +41,10 @@ class CodeGen:
             return 4
         elif type_name in ['int64', 'float64', 'string']:
             return 8
+        elif type_name in ['char', 'int8']:
+            return 1
+        elif type_name == 'int16':
+            return 2
         elif type_name in self.structs:
             # Calculate struct size
             total = 0
@@ -189,6 +193,12 @@ class CodeGen:
                 self.output.append(f"    movss [rbp - {var_offset - field_offset}], xmm0")
             elif field_type == 'float64':
                 self.output.append(f"    movsd [rbp - {var_offset - field_offset}], xmm0")
+            elif field_type == 'char':
+                self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
+            elif field_type == 'int8':
+                self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
+            elif field_type == 'int16':
+                self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
 
     def gen_function(self, func):
         self.locals = {}
@@ -324,6 +334,15 @@ class CodeGen:
                         # Convert to int64 then store lower 32 bits
                         self.gen_conversion(actual_type, 'int64')
                         self.output.append("    mov dword ptr [rdx], eax")
+                    elif base_type == 'char':
+                        self.gen_conversion(actual_type, 'int64') # char is int-like
+                        self.output.append("    mov byte ptr [rdx], al")
+                    elif base_type == 'int8':
+                        self.gen_conversion(actual_type, 'int64')
+                        self.output.append("    mov byte ptr [rdx], al")
+                    elif base_type == 'int16':
+                        self.gen_conversion(actual_type, 'int64')
+                        self.output.append("    mov word ptr [rdx], ax")
                     else:
                         # Default to 64-bit store for int64, pointers, or unknown base
                         self.gen_conversion(actual_type, 'int64')
@@ -385,6 +404,12 @@ class CodeGen:
                         self.output.append(f"    movss [rbp - {var_offset - field_offset}], xmm0")
                     elif field_type == 'float64':
                         self.output.append(f"    movsd [rbp - {var_offset - field_offset}], xmm0")
+                    elif field_type == 'char':
+                         self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
+                    elif field_type == 'int8':
+                         self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
+                    elif field_type == 'int16':
+                         self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
     def gen_if_stmt(self, stmt):
         end_label = self.new_label("if_end")
         
@@ -470,6 +495,12 @@ class CodeGen:
                 elif target_type == 'int32':
                     # Sign-extend 32-bit int to 64-bit
                     self.output.append("    movsxd rax, dword ptr [rax]")
+                elif target_type == 'char':
+                    self.output.append("    movzx rax, byte ptr [rax]")
+                elif target_type == 'int8':
+                    self.output.append("    movsx rax, byte ptr [rax]")
+                elif target_type == 'int16':
+                    self.output.append("    movsx rax, word ptr [rax]")
                 else:
                     # Default 64-bit load
                     self.output.append("    mov rax, [rax]")
@@ -591,6 +622,12 @@ class CodeGen:
                             self.output.append(f"    movss xmm0, [rbp - {var_offset - field_offset}]")
                         elif field_type == 'float64':
                             self.output.append(f"    movsd xmm0, [rbp - {var_offset - field_offset}]")
+                        elif field_type == 'char':
+                            self.output.append(f"    movzx rax, byte ptr [rbp - {var_offset - field_offset}]")
+                        elif field_type == 'int8':
+                            self.output.append(f"    movsx rax, byte ptr [rbp - {var_offset - field_offset}]")
+                        elif field_type == 'int16':
+                            self.output.append(f"    movsx rax, word ptr [rbp - {var_offset - field_offset}]")
                         
                         # Convert if needed
                         if expected_type is not None and expected_type != field_type:
@@ -779,6 +816,14 @@ class CodeGen:
                 return 'int64'
 
     def gen_conversion(self, from_type, to_type):
+        if from_type == to_type: return
+
+        # Treat char as int64 for conversion purposes
+        if from_type == 'char': from_type = 'int64'
+        if to_type == 'char': to_type = 'int64'
+        if from_type in ['int8', 'int16']: from_type = 'int64'
+        if to_type in ['int8', 'int16']: to_type = 'int64'
+        
         if from_type == to_type: return
         
         # Float to Int

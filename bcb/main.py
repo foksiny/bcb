@@ -24,6 +24,22 @@ def main():
         tokens = tokenize(code)
         parser = Parser(tokens, os.path.dirname(abs_input), {abs_input})
         ast = parser.parse()
+        
+        # Diagnostics and Analysis
+        from bcb.errors import ErrorManager
+        from bcb.analyzer import SemanticAnalyzer
+        
+        error_manager = ErrorManager(code, input_file)
+        analyzer = SemanticAnalyzer(ast, error_manager)
+        analyzer.analyze()
+        
+        if error_manager.diagnostics:
+             error_manager.print_diagnostics()
+             
+        if error_manager.has_error:
+             print("Compilation failed due to errors.")
+             sys.exit(1)
+
         codegen = CodeGen(ast)
         asm = codegen.generate()
 
@@ -33,7 +49,10 @@ def main():
         print(f"Compiled {input_file} to {output_file}")
 
     except Exception as e:
-        print(f"Error: {e}")
+        # Fallback for unhandled exceptions (like in lexer/parser runtime errors if not caught)
+        print(f"Internal Compiler Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":

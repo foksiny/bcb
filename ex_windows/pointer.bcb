@@ -10,12 +10,12 @@ define printf(msg: string, all: ...args) -> int32;
 export main(void) -> int32 {
     int32 a = 1;
     int32* ptr = &a;
-    call printf(string msg, int32* ptr);
-    call printf(string msg2, int32 ptr);
+    call printf(string msg, int32 (*ptr));
+    call printf(string msg2, int32* ptr);
     // Pass the pointer itself into change so it can modify 'a'
-    call change(int32 ptr);
-    call printf(string msg, int32* ptr);
-    call printf(string msg2, int32 ptr);
+    call change(int32* ptr);
+    call printf(string msg, int32 (*ptr));
+    call printf(string msg2, int32* ptr);
     return int32 0;
 }
 

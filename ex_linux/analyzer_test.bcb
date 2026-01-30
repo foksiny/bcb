@@ -1,0 +1,17 @@
+<outtype: linux64>
+// EXPECT_ERROR: Undefined variable 'unknown_var'
+// EXPECT_PRE: Implicit conversion from 'int64' to 'int32' may truncate value
+
+data {
+    string msg: "Msg"
+}
+
+export main(void) -> int32 {
+    int32 x = 10;
+    int32 y = unknown_var; // Error
+    
+    int64 big = 9999999999;
+    int32 small = big; // PRE
+    
+    return int32 0;
+}

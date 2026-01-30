@@ -1,0 +1,35 @@
+<outtype: win64>
+// EXPECT: a\n97\nEqual a\nNot Equal b\nReturn: b\n
+
+data {
+    string msg : "%c\n"
+    string msg2 : "%d\n"
+    string msg_eq : "Equal a\n"
+    string msg_neq : "Not Equal b\n"
+    string msg_ret : "Return: %c\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+get_b(void) -> char {
+    return char 'b';
+}
+
+export main(void) -> int32 {
+    char c = 'a';
+    call printf(string msg, char c);
+    call printf(string msg2, char c);
+    
+    $if c == 'a'
+        call printf(string msg_eq);
+    $endif
+
+    $if c != 'b'
+        call printf(string msg_neq);
+    $endif
+
+    char r = call get_b();
+    call printf(string msg_ret, char r);
+
+    return int32 0;
+}

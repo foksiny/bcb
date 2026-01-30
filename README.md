@@ -122,7 +122,36 @@ BCB treats pointers as 64‑bit integers at the ABI level (Windows x64), so they
 
 ---
 
-## 4. The Mutation System (md)
+## 4. The Semantic Analyzer & Diagnostics
+BCB now includes a powerful **Semantic Analyzer** that runs before compilation. It checks your code for logical errors, type mismatches, and potential runtime hazards.
+
+### Analyzer Capabilities
+1.  **Type Safety**: Ensures you don't accidentally assign a `float32` to an `int64` without casting.
+2.  **Scope Validation**: Checks that variables and functions are declared before use.
+3.  **Strict Declarations**: External functions (like `printf`) **must** be explicitly defined using `define` or imported. Implicit usage is no longer allowed.
+4.  **Pointer Safety**: Validates pointer levels (e.g., passing `int32` where `int32*` is expected produces an error).
+
+### Diagnostic Levels
+The compiler reports feedback in four levels, using colored output for readability:
+
+| Level | Color | Meaning |
+| :--- | :--- | :--- |
+| **ERROR** | 🔴 Red | A hard failure. Compilation stops (e.g., Syntax error, Type mismatch). |
+| **WARNING** | 🟡 Yellow | The code will compile, but it's suspicious (e.g., Implicit conversion that might be unintended). |
+| **PRE** | 🟠 Orange | **Possible Runtime Error**. See detail below. |
+| **TIP** | 🔵 Blue | A helpful suggestion to fix an error (e.g., "Did you forget to define 'printf'?"). |
+
+### What is a PRE (Possible Runtime Error)?
+A **PRE** is a special warning category unique to BCB. It detects code that is syntactically valid but statistically likely to cause bugs or crashes at runtime.
+
+**Common PREs:**
+- **Implicit Truncation**: Converting a large integer (`int64`) to a smaller one (`int32`) without an explicit cast.
+  - *Example*: `int32 x = my_int64_var;` -> **PRE**: "Implicit conversion from 'int64' to 'int32' may truncate value."
+- **Supression**: The analyzer is smart! If you assign a safe literal like `int32 x = 1;` (where `1` fits in 32 bits), the PRE is automatically suppressed.
+
+---
+
+## 5. The Mutation System (md)
 The most unique feature of BCB is the `md` (Modify) statement. In traditional languages, `x = 10` can be both a declaration and an assignment. In BCB, they are strictly separated.
 
 - **Initialization**: `int32 x = 10;` (Creates space on the stack)
@@ -141,7 +170,7 @@ i = 5;              // ERROR: Redeclaration of 'i' in the same scope.
 
 ---
 
-## 5. Data & Memory Structures
+## 6. Data & Memory Structures
 
 ### Structs: Custom Layouts
 Structs are blueprints for memory. They are declared in the `data` block.
@@ -177,7 +206,7 @@ data {
 
 ---
 
-## 6. Structured Control Flow ($)
+## 7. Structured Control Flow ($)
 BCB uses high-level control flow structures prefixed with `$`. These are luxurious abstractions over raw assembly jumps.
 
 ### Conditionals ($if)
@@ -203,7 +232,7 @@ $endwhile
 
 ---
 
-## 7. Assembly-Level Control Flow (@)
+## 8. Assembly-Level Control Flow (@)
 For those who want to "hand-roll" their logic, BCB supports raw labels and jumps. This is what the `$` constructs compile into!
 
 | Instruction | Meaning |
@@ -228,7 +257,7 @@ For those who want to "hand-roll" their logic, BCB supports raw labels and jumps
 
 ---
 
-## 8. Advanced Math & Logic
+## 9. Advanced Math & Logic
 BCB supports all standard arithmetic and bitwise operations.
 
 ### Operators
@@ -251,14 +280,15 @@ md float32 a = float32(a + b);
 
 ---
 
-## 9. C Interopterability & Custom Functions
+## 10. C Interopterability & Custom Functions
 BCB is a "good neighbor" to C. You can link with any C library (like the Windows CRT).
 
 ### Defining External Functions
+**Strict Rule**: You must explicitly define any external function you use. Check your standard library (or `msvcrt` on Windows) for signatures.
 ```bcb
+define printf(fmt: string, all: ...args) -> int32;
 define malloc(size: int64) -> int64;
 define free(ptr: int64) -> void;
-define getchar(void) -> int32;
 ```
 
 ### Creating Your Own Functions
@@ -277,7 +307,25 @@ export main(void) -> int32 {
 
 ---
 
-## 10. Compiler Internals & Win64 ABI
+## 11. Pointer Dereferencing Syntax
+When passing pointers to functions (like `printf`), explicit syntax controls whether you pass the **address** or the **value**.
+
+- **Passing the Address (Pointer)**:
+  ```bcb
+  int32* ptr = ...;
+  call printf(msg, int32* ptr); // Passes the address 0x1234ABC...
+  ```
+
+- **Passing the Value (Dereference)**:
+  Use parentheses around the dereference expression `(*ptr)` to extract the value.
+  ```bcb
+  int32* ptr = ...;
+  call printf(msg, int32 (*ptr)); // Dereferences and passes the value (e.g., 42)
+  ```
+
+---
+
+## 12. Compiler Internals & Win64 ABI
 To write truly advanced BCB, you must understand how it talks to the CPU.
 
 ### The Calling Convention (Microsoft x64)
@@ -296,7 +344,7 @@ When a function starts, BCB:
 
 ---
 
-## 🔨 Building and Testing
+## 13. Building and Testing
 ```bash
 # Install the bcb command
 pip install -e .
