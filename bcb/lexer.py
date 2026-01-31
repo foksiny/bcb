@@ -15,7 +15,8 @@ KEYWORDS = {
     '$if', '$elseif', '$else', '$endif',
     '$while', '$endwhile', 'md',
     'jmp', 'ifn', 'cmp_t',
-    'struct', 'enum', 'import'
+    'struct', 'enum', 'import',
+    'push', 'pop', 'no_value'
 }
 
 TOKEN_SPEC = [

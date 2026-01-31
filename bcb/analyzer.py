@@ -1,4 +1,5 @@
 from .parser import *
+from .parser import NoValueExpr
 from .errors import DiagnosticLevel
 
 class SemanticAnalyzer:
@@ -10,6 +11,7 @@ class SemanticAnalyzer:
         self.structs = {}
         self.enums = {}
         self.current_function = None
+        self.function_stack = [] # Virtual stack for tracking push/pop types
 
     def enter_scope(self):
         self.scopes.append({})
@@ -42,6 +44,7 @@ class SemanticAnalyzer:
              return True # Compatibleish
         if target in ['float64', 'float32'] and actual in ['float64', 'float32']:
              return True
+        if actual == "no_value": return True
         return False
 
     def check_type_compatibility(self, target, actual, node, context="assignment", expr_node=None):
@@ -114,6 +117,7 @@ class SemanticAnalyzer:
 
     def analyze_function(self, func):
         self.current_function = func
+        self.function_stack = [] # Reset virtual stack
         self.enter_scope()
         
         for name, type_name in func.params:
@@ -169,9 +173,38 @@ class SemanticAnalyzer:
         elif isinstance(stmt, WhileStmt):
              self.analyze_expr(stmt.condition)
              self.enter_scope()
+             # Warning: Stack effects inside loops are not tracked across iterations currently
+             stack_depth_before = len(self.function_stack)
              for s in stmt.body:
                  self.analyze_stmt(s)
+             if len(self.function_stack) != stack_depth_before:
+                  self.errors.warning("Stack modification inside loop may cause overflow/underflow if not balanced", stmt.line, stmt.column)
              self.exit_scope()
+
+        elif isinstance(stmt, PushStmt):
+            expr_type = self.analyze_expr(stmt.expr)
+            # Check compatibility between expr and push type
+            self.check_type_compatibility(stmt.type_name, expr_type, stmt, "push statement", expr_node=stmt.expr)
+            self.function_stack.append((stmt.type_name, stmt))
+
+        elif isinstance(stmt, PopStmt):
+            if not self.function_stack:
+                self.errors.error("Stack underflow: popping from empty stack", stmt.line, stmt.column)
+                return
+            
+            pushed_type, pushed_node = self.function_stack.pop()
+            
+            # Check if popped type matches pushed type
+            # We enforce strict matching or safe conversion here?
+            # User example: push int16, pop int32.
+            # If implementation pushes 64-bit, this is fine visually if types compatible.
+            if not self.is_type_compatible(stmt.type_name, pushed_type) and not self.is_type_compatible(pushed_type, stmt.type_name):
+                 self.errors.warning(f"Popped type '{stmt.type_name}' does not match pushed type '{pushed_type}'", stmt.line, stmt.column)
+
+            # Check variable assignment
+            var_type = self.analyze_lvalue(stmt.var_name, stmt)
+            if var_type:
+                self.check_type_compatibility(var_type, stmt.type_name, stmt, f"pop to '{stmt.var_name}'")
 
     def analyze_lvalue(self, name, node):
         t = self.lookup(name)
@@ -242,8 +275,6 @@ class SemanticAnalyzer:
         elif isinstance(expr, StructLiteralExpr):
             # For now, we don't infer struct type well from AST unless passed down, 
             # but usually it's assigned to a variable of known type.
-            # In VarDeclStmt check, we see "StructName var = { ... }".
-            # The expr doesn't know its type easily without inference context.
             # We can try to guess from fields or return "struct_literal" and let check_type_compatibility handle it if target is struct.
             return "struct_literal"
             
@@ -267,7 +298,10 @@ class SemanticAnalyzer:
             else:
                  self.errors.error(f"Cannot access field '{expr.field_name}' on non-struct type '{obj_type}'", expr.line, expr.column)
                  return "unknown"
-        
+
+        elif isinstance(expr, NoValueExpr):
+            return "no_value"
+
         return "unknown"
 
     def analyze_call(self, call_node):

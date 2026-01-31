@@ -162,6 +162,22 @@ class CmpTStmt(ASTNode):
         self.condition = condition
         self.target = target
 
+class PushStmt(ASTNode):
+    def __init__(self, type_name, expr, line=0, column=0):
+        super().__init__(line, column)
+        self.type_name = type_name
+        self.expr = expr
+
+class PopStmt(ASTNode):
+    def __init__(self, type_name, var_name, line=0, column=0):
+        super().__init__(line, column)
+        self.type_name = type_name
+        self.var_name = var_name
+
+class NoValueExpr(ASTNode):
+    def __init__(self, line=0, column=0):
+        super().__init__(line, column)
+
 class Parser:
     def __init__(self, tokens, base_dir=".", imported_files=None):
         self.tokens = tokens
@@ -451,6 +467,34 @@ class Parser:
                 target = self.consume(TokenType.LABEL).value
                 self.consume(TokenType.SYMBOL, ';')
                 return CmpTStmt(cond, target, token.line, token.column)
+            elif token.value == 'push':
+                self.consume()
+                # Parse type
+                type_token = self.peek()
+                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+                type_name = self.consume().value
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
+                
+                expr = self.parse_expression()
+                self.consume(TokenType.SYMBOL, ';')
+                return PushStmt(type_name, expr, token.line, token.column)
+            elif token.value == 'pop':
+                self.consume()
+                # Parse type
+                type_token = self.peek()
+                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+                type_name = self.consume().value
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
+                
+                var_name = self.consume(TokenType.IDENTIFIER).value
+                self.consume(TokenType.SYMBOL, ';')
+                return PopStmt(type_name, var_name, token.line, token.column)
             elif token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
                 # Variable declaration, including pointer types (e.g., int32* ptr)
                 type_name = self.consume().value
@@ -603,6 +647,9 @@ class Parser:
                     self.consume()
             self.consume(TokenType.SYMBOL, ')')
             return CallExpr(name, args, token.line, token.column)
+        elif token.type == TokenType.KEYWORD and token.value == 'no_value':
+            self.consume()
+            return NoValueExpr(token.line, token.column)
         elif token.type == TokenType.SYMBOL and token.value == '(':
             self.consume()  # (
             expr = self.parse_expression()

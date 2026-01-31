@@ -1,0 +1,51 @@
+<outtype: win64>
+// EXPECT: 40\n30\n20.50\n10.50\na\nhello\n20\n10\n
+
+data {
+    string fmt_int : "%d\n"
+    string fmt_float : "%.2f\n"
+    string fmt_char : "%c\n"
+    string fmt_str : "%s\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 a = no_value; // tells the compiler that this variable doesn't have a value yet.
+    int64 b = no_value;
+    float32 c = no_value;
+    float64 d = no_value;
+    char e = no_value;
+    string f = no_value;
+    int8 g = no_value;
+    int16 h = no_value;
+
+    push int16 10;
+    push int8 20;
+    push string "hello";
+    push char 'a';
+    push float64 10.5;
+    push float32 20.5;
+    push int64 30;
+    push int32 40;
+
+    pop int32 a;
+    pop int64 b;
+    pop float32 c;
+    pop float64 d;
+    pop char e;
+    pop string f;
+    pop int8 g;
+    pop int16 h;
+
+    call printf(string fmt_int, int32 a);
+    call printf(string fmt_int, int64 b);
+    call printf(string fmt_float, float32 c);
+    call printf(string fmt_float, float64 d);
+    call printf(string fmt_char, char e);
+    call printf(string fmt_str, string f);
+    call printf(string fmt_int, int8 g);
+    call printf(string fmt_int, int16 h);
+
+    return int32 0;
+}

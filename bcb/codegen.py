@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, NoValueExpr
 
 class CodeGen:
     def __init__(self, ast):
@@ -410,6 +410,67 @@ class CodeGen:
                          self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
                     elif field_type == 'int16':
                          self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+        elif isinstance(stmt, PushStmt):
+            actual_type = self.gen_expression(stmt.expr, expected_type=stmt.type_name)
+            
+            # If explicit type provided, ensure we convert to it before pushing
+            if actual_type != stmt.type_name:
+                self.gen_conversion(actual_type, stmt.type_name)
+                
+            if stmt.type_name == 'float32':
+                self.output.append("    sub rsp, 8")
+                self.output.append("    movss [rsp], xmm0")
+            elif stmt.type_name == 'float64':
+                self.output.append("    sub rsp, 8")
+                self.output.append("    movsd [rsp], xmm0")
+            else:
+                # Integer types (and pointers)
+                # Ensure we represent smaller ints correctly in RAX if needed?
+                # RAX should hold the value. 'push' pushes 64 bits.
+                self.output.append("    push rax")
+
+        elif isinstance(stmt, PopStmt):
+             # Check if var exists
+             if stmt.var_name in self.locals:
+                 offset, var_type = self.locals[stmt.var_name]
+                 
+                 # Pop into register based on stmt.type_name (how we interpret the stack slot)
+                 if stmt.type_name == 'float32':
+                     self.output.append("    movss xmm0, [rsp]")
+                     self.output.append("    add rsp, 8")
+                     # Convert to var_type if needed? PopStmt implies simple pop, but let's be safe
+                     if var_type != 'float32':
+                         self.gen_conversion('float32', var_type)
+                 elif stmt.type_name == 'float64':
+                     self.output.append("    movsd xmm0, [rsp]")
+                     self.output.append("    add rsp, 8")
+                     if var_type != 'float64':
+                         self.gen_conversion('float64', var_type)
+                 else:
+                     self.output.append("    pop rax")
+                     if var_type not in ['float32', 'float64'] and stmt.type_name != var_type:
+                         pass # conversions for ints usually implicit or done via store size
+                 
+                 # Store to variable
+                 if var_type == 'float32':
+                     self.output.append(f"    movss [rbp - {offset}], xmm0")
+                 elif var_type == 'float64':
+                     self.output.append(f"    movsd [rbp - {offset}], xmm0")
+                 elif var_type == 'int32':
+                     self.output.append(f"    mov dword ptr [rbp - {offset}], eax")
+                 elif var_type == 'int64':
+                     self.output.append(f"    mov [rbp - {offset}], rax")
+                 elif var_type == 'char':
+                     self.output.append(f"    mov byte ptr [rbp - {offset}], al")
+                 elif var_type == 'int8':
+                     self.output.append(f"    mov byte ptr [rbp - {offset}], al")
+                 elif var_type == 'int16':
+                     self.output.append(f"    mov word ptr [rbp - {offset}], ax")
+                 elif var_type in self.structs:
+                     pass # popping struct? Not supported yet simple copy
+                 else:
+                     # Default (pointers etc)
+                     self.output.append(f"    mov [rbp - {offset}], rax")
     def gen_if_stmt(self, stmt):
         end_label = self.new_label("if_end")
         
@@ -645,6 +706,18 @@ class CodeGen:
                     return expected_type
                 return 'int64'
             return 'int64'
+
+        elif isinstance(expr, NoValueExpr):
+             # Initialize to 0
+             self.output.append("    xor rax, rax")
+             
+             if expected_type in ['float32', 'float64']:
+                 if expected_type == 'float32':
+                      self.output.append("    xorps xmm0, xmm0")
+                 else:
+                      self.output.append("    xorpd xmm0, xmm0")
+                 return expected_type
+             return expected_type if expected_type else 'int64'
 
         # 5. Handle Calls
         elif isinstance(expr, CallExpr):

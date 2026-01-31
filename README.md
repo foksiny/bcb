@@ -9,13 +9,16 @@
 1. [Core Philosophy](#core-philosophy)
 2. [Project Anatomy](#project-anatomy)
 3. [The Type System & Variables](#the-type-system--variables)
-4. [The Mutation System (md)](#the-mutation-system-md)
-5. [Data & Memory Structures](#data--memory-structures)
-6. [Structured Control Flow ($)](#structured-control-flow-)
-7. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
-8. [Advanced Math & Logic](#advanced-math--logic)
-9. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
-10. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
+4. [The Semantic Analyzer & Diagnostics](#the-semantic-analyzer--diagnostics)
+5. [The Mutation System (md)](#the-mutation-system-md)
+6. [Data & Memory Structures](#data--memory-structures)
+7. [Structured Control Flow ($)](#structured-control-flow-)
+8. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
+9. [Advanced Math & Logic](#advanced-math--logic)
+10. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
+11. [Pointer Dereferencing Syntax](#pointer-dereferencing-syntax)
+12. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
+13. [Building and Testing](#building-and-testing)
 
 ---
 
@@ -66,6 +69,9 @@ BCB is statically typed. Every variable occupies a specific amount of space on t
 int32 age = 25;
 float64 price = 99.99;
 string label = "Inventory Item";
+
+// Delayed Initialization using 'no_value' (initializes to zero)
+int32 future_val = no_value;
 ```
 
 ### Pointers & Addressing
@@ -103,8 +109,8 @@ BCB supports **typed pointers** to stack variables, with explicit address-of and
       int32 a   = 1;
       int32* p  = &a;
 
-      // Pass the pointer itself to the function (NOT *p)
-      call change(int32 p);
+      // Pass the pointer itself to the function (still uses *p)
+      call change(int32 *p);
 
       // a was modified through the pointer
       call printf(string "%d\n", int32 a);  // prints 2
@@ -115,7 +121,7 @@ BCB supports **typed pointers** to stack variables, with explicit address-of and
 - **Pointers in calls vs. values**
   - `int32* p` in a **declaration** or parameter type means "pointer to int32".
   - In a **call**, the type before the expression describes the expected base type:
-    - `call change(int32 p);` → passes the pointer value `p` into `ptr: int32*`.
+    - `call change(int32 *p);` → passes the pointer value `p` into `ptr: int32*`.
     - `call printf(string fmt, int32* p);` → passes the **value pointed to by** `p` (because of the `*` in the expression).
 
 BCB treats pointers as 64‑bit integers at the ABI level (Windows x64), so they are passed and returned in the standard integer registers (`RCX`, `RDX`, `R8`, `R9`, `RAX`) just like `int64`.
@@ -165,7 +171,7 @@ The most unique feature of BCB is the `md` (Modify) statement. In traditional la
 ```bcb
 int32 i = 0;
 md int32 i = i + 1; // Correct
-i = 5;              // ERROR: Redeclaration of 'i' in the same scope.
+int32 i = 5;              // ERROR: 'i' is already declared in this scope.
 ```
 
 ---
@@ -253,6 +259,17 @@ For those who want to "hand-roll" their logic, BCB supports raw labels and jumps
     md int32 i = i + 1;
     jmp @loop_start;
 @loop_end:
+```
+
+### Manual Stack Operations
+You can manually push and pop values to/from the stack. Be careful to balance your stack!
+
+```bcb
+push int64 100;    // Pushes 100 onto the stack
+push int32 42;     // Pushes 42 (padded to 64-bit on stack)
+
+pop int32 val1;    // Pops into variable val1
+pop int64 val2;    // Pops into variable val2
 ```
 
 ---
