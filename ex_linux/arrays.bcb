@@ -1,0 +1,32 @@
+<outtype: linux64>
+// EXPECT: 0\n1\narr[0] = 0\narr[1] = 10\narr[2] = 2\narr[3] = 3\narr[4] = 4\narr[5] = 5\narr[6] = 6\narr[7] = 7\narr[8] = 8\narr[9] = 9\na = 4\n
+
+data {
+    string msg : "%d\n"
+    string msg2 : "arr[%d] = %d\n"
+    string msg3 : "a = %d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32 arr[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}; // you can use {0} to initialize all elements to 0
+
+    call printf(string msg, int32 arr[0]); // 0
+    call printf(string msg, int32 arr[1]); // 1
+    md int32 arr[1] = 10;
+    call print_array(int32 arr[]);
+
+    int32 a = arr[4];
+    call printf(string msg3, int32 a);
+    return int32 0;
+}
+
+print_array(arr: int32[]) -> void {
+    int32 i = 0;
+    int32 len = length(arr);
+$while int32 i < int32 len
+    call printf(string msg2, int32 i, int32 arr[i]);
+    md int32 i = i + 1;
+$endwhile
+}

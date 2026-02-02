@@ -11,7 +11,7 @@
 3. [The Type System & Variables](#the-type-system--variables)
 4. [The Semantic Analyzer & Diagnostics](#the-semantic-analyzer--diagnostics)
 5. [The Mutation System (md)](#the-mutation-system-md)
-6. [Data & Memory Structures](#data--memory-structures)
+6. [Data & Memory Structures (Structs, Enums, Arrays)](#data--memory-structures)
 7. [Structured Control Flow ($)](#structured-control-flow-)
 8. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
 9. [Advanced Math & Logic](#advanced-math--logic)
@@ -208,6 +208,47 @@ data {
     enum Status { IDLE, BUSY, DONE }
 }
 // Status.IDLE is 0, Status.BUSY is 1, etc.
+```
+
+### Arrays & Lists: Contiguous Memory
+BCB supports fixed-size stack-allocated arrays. Arrays in BCB are "smart" and carry their length in a hidden 8-byte header before the data.
+
+**Declaration & Initialization:**
+```bcb
+// Declare an array of 5 integers
+int32 numbers[5] = {10, 20, 30, 40, 50};
+
+// Partial initialization (remaining elements zeroed)
+int32 zeroes[10] = {0}; 
+```
+
+**Access & Modification:**
+```bcb
+// Accessing an element
+int32 first = numbers[0];
+
+// Modifying an element (requires 'md' and index)
+md int32 numbers[1] = 99;
+```
+
+**Array Utilities:**
+- **`length(arr)`**: Returns the number of elements in the array (read from the hidden header).
+- **Passing to functions**: Use `type name[]` in the parameter list. Inside the function, the array acts as a pointer to the first element.
+  ```bcb
+  print_ints(arr: int32[]) -> void {
+      int32 len = length(arr);
+      // ... loop through arr[i] ...
+  }
+
+  // Call using [] syntax to pass the base address
+  call print_ints(int32 arr[]);
+  ```
+
+**Advanced: Arrays of Structs**
+BCB allows you to nest structs within arrays for complex data handling:
+```bcb
+MyStruct list[2] = { {x: 1, y: 2}, {x: 3, y: 4} };
+int32 val = list[0].x; // Accessing field of array element
 ```
 
 ---

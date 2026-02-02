@@ -61,11 +61,13 @@ class ReturnStmt(ASTNode):
         self.expr = expr
 
 class VarDeclStmt(ASTNode):
-    def __init__(self, type_name, name, expr, line=0, column=0):
+    def __init__(self, type_name, name, expr, is_array=False, array_size=None, line=0, column=0):
         super().__init__(line, column)
         self.type_name = type_name
         self.name = name
         self.expr = expr
+        self.is_array = is_array
+        self.array_size = array_size
 
 class BinaryExpr(ASTNode):
     def __init__(self, left, op, right, line=0, column=0):
@@ -138,6 +140,30 @@ class FieldAssignStmt(ASTNode):
         self.type_name = type_name
         self.var_name = var_name
         self.field_name = field_name
+        self.expr = expr
+
+class ArrayAccessExpr(ASTNode):
+    def __init__(self, arr, index, line=0, column=0):
+        super().__init__(line, column)
+        self.arr = arr
+        self.index = index
+
+class ArrayLiteralExpr(ASTNode):
+    def __init__(self, values, line=0, column=0):
+        super().__init__(line, column)
+        self.values = values
+
+class ArrayAssignStmt(ASTNode):
+    def __init__(self, type_name, arr_name, index, expr, line=0, column=0):
+        super().__init__(line, column)
+        self.type_name = type_name
+        self.arr_name = arr_name
+        self.index = index
+        self.expr = expr
+
+class LengthExpr(ASTNode):
+    def __init__(self, expr, line=0, column=0):
+        super().__init__(line, column)
         self.expr = expr
 
 class LabelDef(ASTNode):
@@ -296,8 +322,28 @@ class Parser:
         self.consume(TokenType.SYMBOL, '{')
         fields = []
         while self.peek().type != TokenType.SYMBOL or self.peek().value != '}':
-            field_type = self.consume(TokenType.KEYWORD).value
+            field_type_token = self.consume()
+            if field_type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                 raise RuntimeError(f"Expected field type, got {field_type_token.type} at line {field_type_token.line}")
+            field_type = field_type_token.value
+            
+            while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                self.consume()
+                field_type += '*'
+            
+            # Array field? (e.g. int32 arr[10])
+            # The current struct def implementation expects "type name;"
+            # We need to peek later if brackets exist after name.
             field_name = self.consume(TokenType.IDENTIFIER).value
+            
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                # Array field
+                self.consume() # [
+                size = self.consume(TokenType.NUMBER).value
+                self.consume(TokenType.SYMBOL, ']') # ]
+                field_type += f"[{size}]" # Encode size in type string for now? Or handle differently?
+                # CodeGen needs to know size. 'int32[10]' as type string.
+            
             self.consume(TokenType.SYMBOL, ';')
             fields.append((field_type, field_name))
         self.consume(TokenType.SYMBOL, '}')
@@ -393,10 +439,17 @@ class Parser:
                 if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
                 type_name = self.consume().value
-                # Optional pointer suffix(es), e.g., int32*, MyStruct**
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
+                # Optional pointer suffix(es) or array brackets, e.g., int32*, int32[]
+                while True:
+                    if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                        self.consume()
+                        type_name += '*'
+                    elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                        self.consume() # [
+                        self.consume(TokenType.SYMBOL, ']') # ]
+                        type_name += '[]'
+                    else:
+                        break
             params.append((name, type_name))
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()
@@ -443,6 +496,14 @@ class Parser:
                     expr = self.parse_expression()
                     self.consume(TokenType.SYMBOL, ';')
                     return FieldAssignStmt(type_name, name, field_name, expr, token.line, token.column)
+                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume() # [
+                    index = self.parse_expression()
+                    self.consume(TokenType.SYMBOL, ']') # ]
+                    self.consume(TokenType.SYMBOL, '=')
+                    expr = self.parse_expression()
+                    self.consume(TokenType.SYMBOL, ';')
+                    return ArrayAssignStmt(type_name, name, index, expr, token.line, token.column)
                 else:
                     self.consume(TokenType.SYMBOL, '=')
                     expr = self.parse_expression()
@@ -502,10 +563,20 @@ class Parser:
                     self.consume()
                     type_name += '*'
                 name = self.consume(TokenType.IDENTIFIER).value
+                
+                is_array = False
+                array_size = None
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume() # [
+                    size_token = self.consume(TokenType.NUMBER)
+                    array_size = int(size_token.value)
+                    self.consume(TokenType.SYMBOL, ']')
+                    is_array = True
+                
                 self.consume(TokenType.SYMBOL, '=')
                 expr = self.parse_expression()
                 self.consume(TokenType.SYMBOL, ';')
-                return VarDeclStmt(type_name, name, expr, token.line, token.column)
+                return VarDeclStmt(type_name, name, expr, is_array, array_size, token.line, token.column)
         elif token.type == TokenType.LABEL:
             label_name = self.consume().value
             self.consume(TokenType.SYMBOL, ':')
@@ -514,16 +585,31 @@ class Parser:
             # Could be struct variable declaration: StructName varName = { ... };
             struct_type = self.consume(TokenType.IDENTIFIER).value
             var_name = self.consume(TokenType.IDENTIFIER).value
+            
+            is_array = False
+            array_size = None
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                self.consume() # [
+                size_token = self.consume(TokenType.NUMBER)
+                array_size = int(size_token.value)
+                self.consume(TokenType.SYMBOL, ']')
+                is_array = True
+
             self.consume(TokenType.SYMBOL, '=')
             expr = self.parse_expression()
             self.consume(TokenType.SYMBOL, ';')
-            return VarDeclStmt(struct_type, var_name, expr, token.line, token.column)
+            return VarDeclStmt(struct_type, var_name, expr, is_array, array_size, token.line, token.column)
         raise RuntimeError(f"Unknown statement {token}")
 
     def parse_expression(self, min_prec=1):
         token = self.peek()
 
         # Handle Casts and Unary Operators (Prefix)
+        if token.type == TokenType.SYMBOL and token.value == '-' and self.peek(1).type == TokenType.NUMBER:
+            self.consume() # -
+            num_token = self.consume()
+            return LiteralExpr(-num_token.value, token.line, token.column)
+            
         if token.type == TokenType.KEYWORD and token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
             type_name = self.consume().value
             if self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
@@ -627,6 +713,12 @@ class Parser:
             return LiteralExpr(self.consume().value, token.line, token.column)
         elif token.type == TokenType.CHAR:
             return LiteralExpr(self.consume().value, token.line, token.column)
+        elif token.type == TokenType.IDENTIFIER and token.value == 'length':
+            self.consume() # length
+            self.consume(TokenType.SYMBOL, '(')
+            expr = self.parse_expression()
+            self.consume(TokenType.SYMBOL, ')')
+            return LengthExpr(expr, token.line, token.column)
         elif token.type == TokenType.KEYWORD and token.value == 'call':
             self.consume()  # call
             name = self.consume(TokenType.IDENTIFIER).value
@@ -656,26 +748,58 @@ class Parser:
             self.consume(TokenType.SYMBOL, ')')
             return expr
         elif token.type == TokenType.SYMBOL and token.value == '{':
-            # Struct literal: { field1: type value, field2: type value }
-            return self.parse_struct_literal()
+            # Check if it looks like a struct literal (name :) or array literal
+            is_struct = False
+            if self.peek(1).type == TokenType.IDENTIFIER and self.peek(2).type == TokenType.SYMBOL and self.peek(2).value == ':':
+                 is_struct = True
+            
+            if is_struct:
+                return self.parse_struct_literal()
+            else:
+                return self.parse_array_literal()
         elif token.type == TokenType.IDENTIFIER:
             name = self.consume().value
-            # Check for dot access (e.g., p.x or Color.RED)
-            if self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
-                # Check if it's an enum value (EnumName.VALUE)
-                if name in self.enum_names:
-                    self.consume()  # .
-                    value_name = self.consume(TokenType.IDENTIFIER).value
-                    return EnumValueExpr(name, value_name, token.line, token.column)
+            
+            if name in self.enum_names and self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
+                self.consume() # .
+                val_name = self.consume(TokenType.IDENTIFIER).value
+                return EnumValueExpr(name, val_name, token.line, token.column)
+
+            expr = VarRefExpr(name, token.line, token.column)
+            
+            while True:
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
+                    # Enum checking inside loop? Enum is only topmost?
+                    # Original code checked enum_names on the first identifier.
+                    # We can keep that check if it's the *first* iteration and purely identifier.
+                    # But if we are here, we already consumed the first identifier.
+                    # So we need to handle Enum special case BEFORE creating VarRefExpr or wrap it.
+                    # But wait, original code did:
+                    # if name in self.enum_names: ... return EnumValueExpr
+                    # element access and enum access usually don't mix (Enum.VAL.field is unlikely in this lang?)
+                    
+                    dot_token = self.consume()
+                    field_name = self.consume(TokenType.IDENTIFIER).value
+                    expr = FieldAccessExpr(expr, field_name, dot_token.line, dot_token.column)
+                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    bracket_token = self.consume() # [
+                    if self.peek().type == TokenType.SYMBOL and self.peek().value == ']':
+                         self.consume() # ]
+                         expr = ArrayAccessExpr(expr, None, bracket_token.line, bracket_token.column)
+                    else:
+                         index = self.parse_expression()
+                         self.consume(TokenType.SYMBOL, ']')
+                         expr = ArrayAccessExpr(expr, index, bracket_token.line, bracket_token.column)
                 else:
-                    # It's a struct field access
-                    expr = VarRefExpr(name, token.line, token.column)
-                    while self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
-                        dot_token = self.consume()  # .
-                        field_name = self.consume(TokenType.IDENTIFIER).value
-                        expr = FieldAccessExpr(expr, field_name, dot_token.line, dot_token.column)
-                    return expr
-            return VarRefExpr(name, token.line, token.column)
+                    break
+            
+            # Post-check: If it was ONLY an identifier and it is an Enum name?
+            # But the loop might have consumed dots.
+            # If it's an Enum, it should be EnumName.Value.
+            # If we parsed `EnumName` as VarRefExpr, then saw `.Value` and made FieldAccessExpr...
+            # We might need to correct it or handle it at the start.
+            
+            return expr
         raise RuntimeError(f"Unexpected token in expression: {token}")
 
     def parse_struct_literal(self):
@@ -692,6 +816,16 @@ class Parser:
         self.consume(TokenType.SYMBOL, '}')
         return StructLiteralExpr(None, field_values, start_token.line, start_token.column)  # struct_type será inferido do contexto
 
+    def parse_array_literal(self):
+        start_token = self.consume(TokenType.SYMBOL, '{')
+        values = []
+        while self.peek().type != TokenType.SYMBOL or self.peek().value != '}':
+            values.append(self.parse_expression())
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
+                self.consume()
+        self.consume(TokenType.SYMBOL, '}')
+        return ArrayLiteralExpr(values, start_token.line, start_token.column)
+
     def parse_call_stmt(self):
         # We already consumed 'call' in some cases, but here we expect it as a statement
         token = self.consume(TokenType.KEYWORD, 'call')
@@ -707,7 +841,17 @@ class Parser:
             while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
                 self.consume()
                 arg_type += '*'
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                 self.consume()
+                 self.consume(TokenType.SYMBOL, ']')
+                 arg_type += '[]'
             arg_expr = self.parse_expression()
+            
+            # Auto-correct type if expression is array access (arr[]) and type is base (int32)
+            if isinstance(arg_expr, ArrayAccessExpr) and arg_expr.index is None:
+                 if not arg_type.endswith('[]') and not arg_type.endswith('*'):
+                      arg_type += '[]'
+            
             args.append((arg_type, arg_expr))
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()

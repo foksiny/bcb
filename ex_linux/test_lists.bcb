@@ -1,0 +1,76 @@
+<outtype: linux64>
+// EXPECT: str[0] = hello\nstr[1] = world\ni64[0] = 10000000000\ni64[1] = 20000000000\nf32[0] = 1.500000\nf32[1] = 2.500000\nf64[0] = 1.234568\nf64[1] = 9.876543\ni8[0] = 120\ni8[1] = -120\nchar[0] = A\nchar[1] = B\ni16[0] = 30000\ni16[1] = -30000\nenum[0] = 0\nenum[1] = 2\nstruct[0].x = 1\nstruct[1].x = 3\n
+
+
+
+data {
+    string msg_s : "str[%d] = %s\n"
+    string msg_i64 : "i64[%d] = %lld\n"
+    string msg_f32 : "f32[%d] = %f\n"
+    string msg_f64 : "f64[%d] = %f\n"
+    string msg_i8 : "i8[%d] = %d\n"
+    string msg_char : "char[%d] = %c\n"
+    string msg_i16 : "i16[%d] = %d\n"
+    string msg_enum : "enum[%d] = %d\n"
+    string msg_struct : "struct[%d].x = %d\n"
+
+    struct MyStruct {
+        int32 x;
+        int32 y;
+    }
+
+    enum MyEnum {
+        RED, GREEN, BLUE
+    }
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    // Strings
+    string strings[2] = {"hello", "world"};
+    call printf(string msg_s, int32 0, string strings[0]);
+    call printf(string msg_s, int32 1, string strings[1]);
+
+    // int64
+    int64 i64s[2] = {10000000000, 20000000000};
+    call printf(string msg_i64, int32 0, int64 i64s[0]);
+    call printf(string msg_i64, int32 1, int64 i64s[1]);
+
+    // float32
+    float32 f32s[2] = {1.5, 2.5};
+    call printf(string msg_f32, int32 0, float32 f32s[0]);
+    call printf(string msg_f32, int32 1, float32 f32s[1]);
+
+    // float64
+    float64 f64s[2] = {1.23456789, 9.87654321};
+    call printf(string msg_f64, int32 0, float64 f64s[0]);
+    call printf(string msg_f64, int32 1, float64 f64s[1]);
+
+    // int8
+    int8 i8s[2] = {int8 120, int8 -120};
+    call printf(string msg_i8, int32 0, int8 i8s[0]);
+    call printf(string msg_i8, int32 1, int8 i8s[1]);
+
+    // char
+    char chars[2] = {'A', 'B'};
+    call printf(string msg_char, int32 0, char chars[0]);
+    call printf(string msg_char, int32 1, char chars[1]);
+
+    // int16
+    int16 i16s[2] = {int16 30000, int16 -30000};
+    call printf(string msg_i16, int32 0, int16 i16s[0]);
+    call printf(string msg_i16, int32 1, int16 i16s[1]);
+
+    // enum
+    MyEnum enums[2] = {MyEnum.RED, MyEnum.BLUE};
+    call printf(string msg_enum, int32 0, MyEnum enums[0]);
+    call printf(string msg_enum, int32 1, MyEnum enums[1]);
+
+    // struct
+    MyStruct structs[2] = {{x: int32 1, y: int32 2}, {x: int32 3, y: int32 4}};
+    call printf(string msg_struct, int32 0, int32 structs[0].x);
+    call printf(string msg_struct, int32 1, int32 structs[1].x);
+
+    return int32 0;
+}

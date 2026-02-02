@@ -1,5 +1,5 @@
 from .parser import *
-from .parser import NoValueExpr
+from .parser import NoValueExpr, LengthExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt
 from .errors import DiagnosticLevel
 
 class SemanticAnalyzer:
@@ -45,6 +45,8 @@ class SemanticAnalyzer:
         if target in ['float64', 'float32'] and actual in ['float64', 'float32']:
              return True
         if actual == "no_value": return True
+        if actual == "struct_literal" and target in self.structs:
+             return True
         return False
 
     def check_type_compatibility(self, target, actual, node, context="assignment", expr_node=None):
@@ -60,6 +62,13 @@ class SemanticAnalyzer:
              return
         if actual in self.enums and target in ['int64', 'int32', 'int16', 'int8']:
              return
+
+        # Array compatibility (e.g. int32[] = int64[] from literal)
+        if isinstance(target, str) and target.endswith('[]') and isinstance(actual, str) and actual.endswith('[]'):
+             target_elem = target[:-2]
+             actual_elem = actual[:-2]
+             if self.is_type_compatible(target_elem, actual_elem):
+                  return
 
         # Pointers: allow void*? or specific checks
         if isinstance(target, str) and target.endswith('*') and isinstance(actual, str) and actual.endswith('*'):
@@ -132,8 +141,15 @@ class SemanticAnalyzer:
     def analyze_stmt(self, stmt):
         if isinstance(stmt, VarDeclStmt):
             expr_type = self.analyze_expr(stmt.expr)
-            self.declare(stmt.name, stmt.type_name, stmt)
-            self.check_type_compatibility(stmt.type_name, expr_type, stmt, f"declaration of '{stmt.name}'", expr_node=stmt.expr)
+            declared_type = stmt.type_name
+            if stmt.is_array:
+                declared_type += "[]"
+            self.declare(stmt.name, declared_type, stmt)
+            
+            # For array init with literal, we might need relaxed check or "array_literal" handling
+            # If expr_type matches declared_type (e.g. int32[] vs int32[]) -> OK.
+            
+            self.check_type_compatibility(declared_type, expr_type, stmt, f"declaration of '{stmt.name}'", expr_node=stmt.expr)
             
         elif isinstance(stmt, VarAssignStmt):
             var_type = self.analyze_lvalue(stmt.name, stmt) # Simple check
@@ -272,6 +288,27 @@ class SemanticAnalyzer:
                  return "unknown"
             return expr.enum_name # Return the Enum type name
 
+        elif isinstance(expr, LengthExpr):
+             self.analyze_expr(expr.expr)
+             return "int32"
+
+        elif isinstance(expr, ArrayAccessExpr):
+             arr_type = self.analyze_expr(expr.arr)
+             if expr.index is not None:
+                 self.analyze_expr(expr.index)
+                 if arr_type.endswith('[]'):
+                     return arr_type[:-2]
+                 elif arr_type.endswith('*'):
+                     return arr_type[:-1]
+                 return "unknown"
+             else:
+                 return arr_type
+
+        elif isinstance(expr, ArrayLiteralExpr):
+             if not expr.values: return "unknown"
+             t = self.analyze_expr(expr.values[0])
+             return t + "[]"
+
         elif isinstance(expr, StructLiteralExpr):
             # For now, we don't infer struct type well from AST unless passed down, 
             # but usually it's assigned to a variable of known type.
@@ -279,6 +316,19 @@ class SemanticAnalyzer:
             return "struct_literal"
             
         elif isinstance(expr, FieldAccessExpr):
+            # Check if this is an Enum access (Type.MEMBER)
+            # Logic: If expr.obj is a VarRef, check if it shadows a variable. 
+            # If not a variable, check if it's an Enum.
+            if isinstance(expr.obj, VarRefExpr):
+                var_type = self.lookup(expr.obj.name)
+                if not var_type and expr.obj.name in self.enums:
+                     # It is an Enum access
+                     e = self.enums[expr.obj.name]
+                     if expr.field_name not in e.values:
+                          self.errors.error(f"Enum '{expr.obj.name}' has no member '{expr.field_name}'", expr.line, expr.column)
+                          return "unknown"
+                     return expr.obj.name
+
             obj_type = self.analyze_expr(expr.obj)
             if obj_type in ["unknown", "struct_literal"]: return "unknown"
             
