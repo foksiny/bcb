@@ -1,0 +1,19 @@
+<outtype: linux64>
+// no expect because argv depends on the arguments passed to the program
+
+data {
+    string msg : "%d\n"
+    string msg2 : "%d: %s\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main(argc: int32, argv: string*) -> int32 {
+    call printf(string msg, int32 argc);
+    int32 i = 0;
+    $while i < argc
+        call printf(string msg2, int32 i, string argv[i]);
+        md int32 i = int32(i + 1); // used int32() so the compiler don't throw a PRE (Possible Runtime Error)
+    $endwhile
+    return int32 0;
+}
