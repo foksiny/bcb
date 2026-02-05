@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr
 
 class CodeGen:
     def __init__(self, ast):
@@ -16,6 +16,7 @@ class CodeGen:
         self.functions = {} # name -> return_type
         self.function_params = {} # name -> params list
         self.string_literals = {} # value -> label
+        self.globals = {} # name -> {'label': str, 'type': str, 'init': ASTNode}
         # Target configuration
         self.outtype = getattr(ast, "outtype", None) or "win64"
         self.is_linux = self.outtype.lower() == "linux64"
@@ -82,13 +83,23 @@ class CodeGen:
         # 0. Process struct definitions
         if self.ast.data_block and self.ast.data_block.structs:
             for struct_def in self.ast.data_block.structs:
-                print(f"DEBUG: Registering struct '{struct_def.name}'")
                 self.register_struct(struct_def)
         
         # 0.5. Process enum definitions
         if self.ast.data_block and self.ast.data_block.enums:
             for enum_def in self.ast.data_block.enums:
                 self.register_enum(enum_def)
+        
+        # 0.6. Process Global Variables
+        for decl in self.ast.declarations:
+            if isinstance(decl, GlobalVarDecl):
+                label = f"G_{decl.name}"
+                type_name = decl.type_name
+                # Arrays are handled differently in bcb? 
+                # For now let's assume they are similar to local but in .data
+                if decl.is_array:
+                    type_name += f"[{decl.array_size}]"
+                self.globals[decl.name] = {'label': label, 'type': type_name, 'init': decl.expr}
         
         # 1. Populate data labels from the data block
         if self.ast.data_block:
@@ -116,7 +127,7 @@ class CodeGen:
             if self.is_linux:
                 self.output.append(".section .rodata")
             else:
-                self.output.append(".section .rdata,\"dr\"")
+                self.output.append(".section .rdata")
             if self.ast.data_block:
                 for type_name, name, value in self.ast.data_block.entries:
                     if type_name == 'string':
@@ -136,6 +147,20 @@ class CodeGen:
                 self.output.append(f"{label}:")
                 escaped_value = val.replace('"', '\\"')
                 self.output.append(f"    .asciz \"{escaped_value}\"")
+
+        # Output global variables in .data section
+        if self.globals:
+            if self.is_linux:
+                self.output.append(".section .data")
+            else:
+                self.output.append(".section .data")
+            
+            for name, info in self.globals.items():
+                label = info['label']
+                t = info['type']
+                expr = info['init']
+                self.output.append(f"{label}:")
+                self.emit_global_constant(t, expr)
             
         # Output the text section
         self.output.append(".text")
@@ -242,6 +267,75 @@ class CodeGen:
                 self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
             elif field_type == 'int16':
                 self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+
+    def emit_global_constant(self, type_name, expr):
+        """Emits a constant value for an initializer in the .data section."""
+        # Strip potential pointer suffix for size check but keep for logic
+        base_size = self.get_type_size(type_name)
+        
+        if isinstance(expr, LiteralExpr):
+            val = expr.value
+            if type_name in ['int8', 'char']:
+                self.output.append(f"    .byte {val}")
+            elif type_name == 'int16':
+                self.output.append(f"    .word {val}")
+            elif type_name == 'int32':
+                self.output.append(f"    .long {val}")
+            elif type_name == 'int64' or type_name.endswith('*'):
+                self.output.append(f"    .quad {val}")
+            elif type_name == 'float32':
+                self.output.append(f"    .float {val}")
+            elif type_name == 'float64':
+                self.output.append(f"    .double {val}")
+            elif type_name == 'string':
+                if val not in self.string_literals:
+                    str_label = self.new_label("str_glob")
+                    self.string_literals[val] = str_label
+                else:
+                    str_label = self.string_literals[val]
+                self.output.append(f"    .quad {str_label}")
+            else:
+                self.output.append(f"    .quad {val}")
+        elif isinstance(expr, EnumValueExpr):
+            if expr.enum_name in self.enums:
+                val = self.enums[expr.enum_name].get(expr.value_name, 0)
+                if base_size == 1: self.output.append(f"    .byte {val}")
+                elif base_size == 2: self.output.append(f"    .word {val}")
+                elif base_size == 4: self.output.append(f"    .long {val}")
+                else: self.output.append(f"    .quad {val}")
+            else:
+                self.output.append(f"    .zero {base_size}")
+        elif type_name in self.structs and isinstance(expr, StructLiteralExpr):
+            # Recurse for struct fields
+            struct_fields = self.structs[type_name]
+            # Map field name to (value, type) from literal
+            lit_fields = {fn: (fv, ft) for fn, ft, fv in expr.field_values}
+            
+            for f_type, f_name in struct_fields:
+                if f_name in lit_fields:
+                    fv, ft = lit_fields[f_name]
+                    self.emit_global_constant(f_type, fv)
+                else:
+                    # Pad with zero
+                    self.output.append(f"    .zero {self.get_type_size(f_type)}")
+        elif type_name.endswith(']') and isinstance(expr, ArrayLiteralExpr):
+            open_bracket = type_name.rfind('[')
+            inner_type = type_name[:open_bracket]
+            size_str = type_name[open_bracket+1:-1]
+            try:
+                size = int(size_str)
+            except ValueError:
+                size = len(expr.values)
+            
+            for i in range(size):
+                if i < len(expr.values):
+                    self.emit_global_constant(inner_type, expr.values[i])
+                else:
+                    self.output.append(f"    .zero {self.get_type_size(inner_type)}")
+        else:
+            # Fallback to zero
+            self.output.append(f"    .zero {base_size}")
+
 
     def gen_function(self, func):
         self.locals = {}
@@ -446,7 +540,6 @@ class CodeGen:
                              elif element_type in self.enums:
                                  self.output.append(f"    mov qword ptr {mem_loc}, rax")
                              elif element_type in self.structs:
-                                 print(f"DEBUG: Generating struct init for '{element_type}'")
                                  # Struct by value in array initialization
                                  sz = self.get_struct_size(element_type)
                                  # ...
@@ -457,7 +550,7 @@ class CodeGen:
                                  self.output.append(f"    mov rcx, {sz}")
                                  self.output.append("    rep movsb")
                              else:
-                                 print(f"DEBUG: Unknown element type '{element_type}' for array init. Structs: {list(self.structs.keys())}")
+                                 pass
                          
                          # TODO: Zero fill if values < size?
                          if len(stmt.expr.values) < stmt.array_size and len(stmt.expr.values) > 0:
@@ -534,6 +627,28 @@ class CodeGen:
                 else:
                     self.gen_conversion(actual_type, t)
                     self.output.append(f"    mov [rbp - {offset}], rax")
+            elif stmt.name in self.globals:
+                info = self.globals[stmt.name]
+                label = info['label']
+                t = info['type']
+                
+                if t in ['float32', 'float64']:
+                    self.gen_conversion(actual_type, t)
+                    if t == 'float32':
+                        self.output.append(f"    movss [rip + {label}], xmm0")
+                    else:
+                        self.output.append(f"    movsd [rip + {label}], xmm0")
+                else:
+                    self.gen_conversion(actual_type, t)
+                    size = self.get_type_size(t)
+                    if size == 1:
+                        self.output.append(f"    mov byte ptr [rip + {label}], al")
+                    elif size == 2:
+                        self.output.append(f"    mov word ptr [rip + {label}], ax")
+                    elif size == 4:
+                        self.output.append(f"    mov dword ptr [rip + {label}], eax")
+                    else:
+                        self.output.append(f"    mov qword ptr [rip + {label}], rax")
         elif isinstance(stmt, IfStmt):
             self.gen_if_stmt(stmt)
         elif isinstance(stmt, WhileStmt):
@@ -580,6 +695,31 @@ class CodeGen:
                          self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
                     elif field_type == 'int16':
                          self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+            elif stmt.var_name in self.globals:
+                info = self.globals[stmt.var_name]
+                label = info['label']
+                struct_type = info['type']
+                
+                if struct_type in self.structs:
+                    field_offsets = self.struct_field_offsets.get(struct_type, {})
+                    field_offset = field_offsets.get(stmt.field_name, 0)
+                    field_type = self.get_field_type(struct_type, stmt.field_name)
+                    
+                    self.gen_expression(stmt.expr, expected_type=field_type)
+                    
+                    # Store logic
+                    if field_type == 'int32':
+                        self.output.append(f"    mov dword ptr [rip + {label} + {field_offset}], eax")
+                    elif field_type == 'int64' or field_type.endswith('*'):
+                        self.output.append(f"    mov qword ptr [rip + {label} + {field_offset}], rax")
+                    elif field_type == 'float32':
+                        self.output.append(f"    movss [rip + {label} + {field_offset}], xmm0")
+                    elif field_type == 'float64':
+                        self.output.append(f"    movsd [rip + {label} + {field_offset}], xmm0")
+                    elif field_type == 'char' or field_type == 'int8':
+                        self.output.append(f"    mov byte ptr [rip + {label} + {field_offset}], al")
+                    elif field_type == 'int16':
+                        self.output.append(f"    mov word ptr [rip + {label} + {field_offset}], ax")
         elif isinstance(stmt, ArrayAssignStmt):
              # 1. Calc address of element
              if stmt.arr_name in self.locals:
@@ -594,36 +734,49 @@ class CodeGen:
                       base_type = t[:-1] if t.endswith('*') else 'int64'
                  
                  self.output.append("    push rax")
-                 
-                 # Index
-                 self.gen_expression(stmt.index, expected_type='int64')
-                 self.output.append("    mov rcx, rax")
-                 self.output.append("    pop rax")
-                 
-                 elm_size = self.get_type_size(base_type)
-                 self.output.append(f"    imul rcx, {elm_size}")
-                 self.output.append("    add rax, rcx")
-                 self.output.append("    push rax") # Save address
-                 
-                 # Value
-                 self.gen_expression(stmt.expr, expected_type=base_type)
-                 self.output.append("    pop rdx") # Address in rdx
-                 
-                 # Store
-                 if base_type == 'float32':
-                     self.output.append("    movss [rdx], xmm0")
-                 elif base_type == 'float64':
-                     self.output.append("    movsd [rdx], xmm0")
-                 elif base_type == 'int32':
-                     self.output.append("    mov dword ptr [rdx], eax")
-                 elif base_type == 'int64':
-                     self.output.append("    mov qword ptr [rdx], rax")
-                 elif base_type == 'char' or base_type == 'int8':
-                     self.output.append("    mov byte ptr [rdx], al")
-                 elif base_type == 'int16':
-                     self.output.append("    mov word ptr [rdx], ax")
-                 else:
-                     self.output.append("    mov qword ptr [rdx], rax")
+             elif stmt.arr_name in self.globals:
+                  info = self.globals[stmt.arr_name]
+                  label = info['label']
+                  t = info['type']
+                  
+                  self.output.append(f"    lea rax, [rip + {label}]")
+                  base_type = t[:t.rfind('[')] if t.endswith(']') else t
+                  self.output.append("    push rax")
+             else:
+                  # Fallback/Error?
+                  self.output.append("    xor rax, rax")
+                  self.output.append("    push rax")
+                  base_type = 'int64'
+             
+             # Index
+             self.gen_expression(stmt.index, expected_type='int64')
+             self.output.append("    mov rcx, rax")
+             self.output.append("    pop rax")
+             
+             elm_size = self.get_type_size(base_type)
+             self.output.append(f"    imul rcx, {elm_size}")
+             self.output.append("    add rax, rcx")
+             self.output.append("    push rax") # Save address
+             
+             # Value
+             self.gen_expression(stmt.expr, expected_type=base_type)
+             self.output.append("    pop rdx") # Address in rdx
+             
+             # Store
+             if base_type == 'float32':
+                 self.output.append("    movss [rdx], xmm0")
+             elif base_type == 'float64':
+                 self.output.append("    movsd [rdx], xmm0")
+             elif base_type == 'int32':
+                 self.output.append("    mov dword ptr [rdx], eax")
+             elif base_type == 'int64':
+                 self.output.append("    mov qword ptr [rdx], rax")
+             elif base_type == 'char' or base_type == 'int8':
+                 self.output.append("    mov byte ptr [rdx], al")
+             elif base_type == 'int16':
+                 self.output.append("    mov word ptr [rdx], ax")
+             else:
+                 self.output.append("    mov qword ptr [rdx], rax")
 
         elif isinstance(stmt, PushStmt):
             actual_type = self.gen_expression(stmt.expr, expected_type=stmt.type_name)
@@ -879,7 +1032,38 @@ class CodeGen:
             elif expr.name in self.data_labels:
                 label = self.data_labels[expr.name]
                 self.output.append(f"    lea rax, [rip + {label}]")
-                return 'int64'  # pointers are ints
+                return 'string'
+            elif expr.name in self.globals:
+                info = self.globals[expr.name]
+                label = info['label']
+                t = info['type']
+                
+                if t == 'float32':
+                    self.output.append(f"    movss xmm0, [rip + {label}]")
+                elif t == 'float64':
+                    self.output.append(f"    movsd xmm0, [rip + {label}]")
+                elif t.endswith(']') or t in self.structs:
+                    self.output.append(f"    lea rax, [rip + {label}]")
+                    # Return pointer type
+                    if t.endswith(']'):
+                        t = t[:t.rfind('[')] + "*"
+                    else:
+                        t = t + "*"
+                else:
+                    size = self.get_type_size(t)
+                    if size == 1:
+                        self.output.append(f"    movsx rax, byte ptr [rip + {label}]")
+                    elif size == 2:
+                        self.output.append(f"    movsx rax, word ptr [rip + {label}]")
+                    elif size == 4:
+                        self.output.append(f"    movsxd rax, dword ptr [rip + {label}]")
+                    else:
+                        self.output.append(f"    mov rax, [rip + {label}]")
+                
+                if expected_type is not None and expected_type != t:
+                    self.gen_conversion(t, expected_type)
+                    return expected_type
+                return t
 
         # 4.5. Handle FieldAccessExpr (e.g., p.x)
         elif isinstance(expr, FieldAccessExpr):
@@ -896,6 +1080,9 @@ class CodeGen:
                 struct_type = self.gen_expression(expr.obj)
                 # For non-VarRefExpr, we assume gen_expression left the address in RAX
             
+            if isinstance(struct_type, str) and struct_type.endswith('*'):
+                struct_type = struct_type[:-1]
+
             if struct_type in self.structs:
                 field_offsets = self.struct_field_offsets.get(struct_type, {})
                 field_offset = field_offsets.get(expr.field_name, 0)

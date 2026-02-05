@@ -48,6 +48,15 @@ class FunctionDef(ASTNode):
         self.body = body
         self.is_exported = is_exported
 
+class GlobalVarDecl(ASTNode):
+    def __init__(self, type_name, name, expr, is_array=False, array_size=None, line=0, column=0):
+        super().__init__(line, column)
+        self.type_name = type_name
+        self.name = name
+        self.expr = expr
+        self.is_array = is_array
+        self.array_size = array_size
+
 class CallExpr(ASTNode):
     def __init__(self, name, args, line=0, column=0):
         super().__init__(line, column)
@@ -209,6 +218,7 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
         self.enum_names = set()  # Track known enum names
+        self.struct_names = set() # Track known struct names
         self.base_dir = base_dir
         self.imported_files = imported_files if imported_files is not None else set()
 
@@ -250,6 +260,8 @@ class Parser:
                     declarations.append(self.parse_function_decl())
                 elif token.value == 'export':
                     declarations.append(self.parse_function_def(True))
+                elif token.value == 'pub':
+                    declarations.append(self.parse_global_var())
                 elif token.value == 'import':
                     self.consume() # import
                     import_path = self.consume(TokenType.STRING).value
@@ -304,7 +316,9 @@ class Parser:
         enums = []
         while self.peek().type != TokenType.SYMBOL or self.peek().value != '}':
             if self.peek().type == TokenType.KEYWORD and self.peek().value == 'struct':
-                structs.append(self.parse_struct_def())
+                s_def = self.parse_struct_def()
+                structs.append(s_def)
+                self.struct_names.add(s_def.name)
             elif self.peek().type == TokenType.KEYWORD and self.peek().value == 'enum':
                 enums.append(self.parse_enum_def())
             else:
@@ -363,6 +377,31 @@ class Parser:
                 self.consume()
         self.consume(TokenType.SYMBOL, '}')
         return EnumDef(name, values, start_token.line, start_token.column)
+
+    def parse_global_var(self):
+        start_token = self.consume(TokenType.KEYWORD, 'pub')
+        type_token = self.peek()
+        if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+            raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+        type_name = self.consume().value
+        while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+            self.consume()
+            type_name += '*'
+        name = self.consume(TokenType.IDENTIFIER).value
+        
+        is_array = False
+        array_size = None
+        if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+            self.consume() # [
+            size_token = self.consume(TokenType.NUMBER)
+            array_size = int(size_token.value)
+            self.consume(TokenType.SYMBOL, ']')
+            is_array = True
+        
+        self.consume(TokenType.SYMBOL, '=')
+        expr = self.parse_expression()
+        self.consume(TokenType.SYMBOL, ';')
+        return GlobalVarDecl(type_name, name, expr, is_array, array_size, start_token.line, start_token.column)
 
     def parse_function_decl(self):
         start_token = self.consume(TokenType.KEYWORD, 'define')
@@ -606,20 +645,34 @@ class Parser:
 
         # Handle Casts and Unary Operators (Prefix)
         if token.type == TokenType.SYMBOL and token.value == '-' and self.peek(1).type == TokenType.NUMBER:
-            self.consume() # -
-            num_token = self.consume()
-            return LiteralExpr(-num_token.value, token.line, token.column)
-            
-        if token.type == TokenType.KEYWORD and token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
+             self.consume() # -
+             num_token = self.consume()
+             return LiteralExpr(-num_token.value, token.line, token.column)
+             
+        # Support both primitive keywords and custom struct/enum types as casts
+        is_type = False
+        if token.type == TokenType.KEYWORD and token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char', 'void']:
+             is_type = True
+        elif token.type == TokenType.IDENTIFIER and (token.value in self.struct_names or token.value in self.enum_names):
+             # Only treat as type cast if NOT followed by '.' (Enum.Value access)
+             if self.peek(1).type != TokenType.SYMBOL or self.peek(1).value != '.':
+                 is_type = True
+        
+        if is_type:
             type_name = self.consume().value
+            # Handle pointers (e.g. int32* x)
+            while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                self.consume()
+                type_name += '*'
+
             if self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
-                # int32(expr)
+                # type(expr)
                 self.consume(TokenType.SYMBOL, '(')
                 expr = self.parse_expression(1)
                 self.consume(TokenType.SYMBOL, ')')
                 lhs = TypeCastExpr(type_name, expr, token.line, token.column)
             else:
-                # int32 expr
+                # type expr
                 rhs = self.parse_expression(11) # High precedence
                 lhs = TypeCastExpr(type_name, rhs, token.line, token.column)
             return self.parse_op_continuation(lhs, min_prec)
@@ -857,4 +910,4 @@ class Parser:
                 self.consume()
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, ';')
-        return CallExpr(name, args)
+        return CallExpr(name, args, token.line, token.column)

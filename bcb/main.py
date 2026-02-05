@@ -28,6 +28,7 @@ def main():
         # Diagnostics and Analysis
         from bcb.errors import ErrorManager
         from bcb.analyzer import SemanticAnalyzer
+        from bcb.optimizer import ASTOptimizer
         
         error_manager = ErrorManager(code, input_file)
         analyzer = SemanticAnalyzer(ast, error_manager)
@@ -39,6 +40,11 @@ def main():
         if error_manager.has_error:
              print("Compilation failed due to errors.")
              sys.exit(1)
+
+        # Optimization Phase
+        print("Optimizing...")
+        optimizer = ASTOptimizer(ast)
+        ast = optimizer.optimize()
 
         codegen = CodeGen(ast)
         asm = codegen.generate()

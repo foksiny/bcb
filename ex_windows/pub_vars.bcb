@@ -1,0 +1,17 @@
+<outtype: win64>
+// EXPECT: 10\n20\n
+
+data {
+    string msg : "%d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+pub int32 a = 10;
+
+export main(void) -> int32 {
+    call printf(string msg, int32 a);
+    md int32 a = 20;
+    call printf(string msg, int32 a);
+    return int32 0;
+}

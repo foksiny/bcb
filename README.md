@@ -9,6 +9,9 @@
 1. [Core Philosophy](#core-philosophy)
 2. [Project Anatomy](#project-anatomy)
 3. [The Type System & Variables](#the-type-system--variables)
+    - [Declaration Basics](#declaration-basics)
+    - [Public Variables (Global Scope)](#public-variables-global-scope)
+    - [Pointers & Addressing](#pointers--addressing)
 4. [The Semantic Analyzer & Diagnostics](#the-semantic-analyzer--diagnostics)
 5. [The Mutation System (md)](#the-mutation-system-md)
 6. [Data & Memory Structures (Structs, Enums, Arrays)](#data--memory-structures)
@@ -58,11 +61,14 @@ BCB is statically typed. Every variable occupies a specific amount of space on t
 
 | Type | Bit Width | Assembly Reg | Usage |
 | :--- | :--- | :--- | :--- |
+| `int8` | 8-bit | AL/R-Byte | Standard numbers, loop counters. |
+| `int16` | 16-bit | AX/R-Word | Standard numbers, loop counters. |
 | `int32` | 32-bit | EAX/R-Dword | Standard numbers, loop counters. |
 | `int64` | 64-bit | RAX/R-Qword | Large numbers, pointers, memory addresses. |
 | `float32`| 32-bit | XMM0-15 | Single-precision decimal math. |
 | `float64`| 64-bit | XMM0-15 | High-precision decimal math. |
 | `string` | 64-bit | RIP-Relative | Pointers to constant text in the `.rdata` section. |
+| `char` | 8-bit | AL/R-Byte | Single character. |
 
 ### Declaration Basics
 ```bcb
@@ -72,6 +78,41 @@ string label = "Inventory Item";
 
 // Delayed Initialization using 'no_value' (initializes to zero)
 int32 future_val = no_value;
+```
+
+### Public Variables (Global Scope)
+BCB supports variables declared at the top-level of the program using the `pub` keyword. These variables are stored in the `.data` section and remain persistent throughout the program's execution.
+
+**Syntax:**
+```bcb
+pub <type> <name> = <initializer>;
+```
+
+**Key Features:**
+- **Persistent State**: Unlike stack variables, public variables live in the global data segment.
+- **Complex Initializers**: Support for scalars, strings, arrays, enums, and structs.
+- **Mutation**: Use `md` to modify global state from any function.
+- **Shadowing**: Local variables can have the same name as global variables; the local version takes precedence within its scope.
+
+**Example:**
+```bcb
+data {
+    struct Config { int32 port; int32 debug; }
+}
+
+pub int32 max_retries = 3;
+pub Config cfg = { port: int32 8080, debug: int32 1 };
+
+export main(void) -> int32 {
+    // Reading global
+    int32 current = max_retries;
+    
+    // Writing global
+    md int32 max_retries = 5;
+    md int32 cfg.port = 443;
+    
+    return int32 0;
+}
 ```
 
 ### Pointers & Addressing
