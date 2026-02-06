@@ -198,10 +198,14 @@ class CodeGen:
         var_offset, _ = self.locals[var_name]
         field_offsets = self.struct_field_offsets.get(struct_type, {})
         
-        for field_name, field_type, field_expr in struct_literal.field_values:
+        # Find actual field types from definition
+        real_field_types = {fn: ft for ft, fn in self.structs.get(struct_type, [])}
+        
+        for field_name, field_type_unused, field_expr in struct_literal.field_values:
             if field_name not in field_offsets:
                 continue
             
+            field_type = real_field_types.get(field_name, field_type_unused)
             field_offset = field_offsets[field_name]
             # Calculate memory location: var is at [rbp - var_offset]
             # Struct starts at that address, field is at struct_start + field_offset
@@ -257,26 +261,43 @@ class CodeGen:
                          self.output.append(f"    mov rcx, {sz}")
                          self.output.append("    rep movsb")
                  continue
+            
+            # Variables or other expressions assigned to fixed-size array field
+            # If target is fixed-size array, we should copy contents if it's an array expression
+            if '[' in field_type and not field_type.endswith('[]'):
+                field_size = self.get_type_size(field_type)
+                
+                # Evaluate expression (returns pointer to the array data)
+                self.gen_expression(field_expr, expected_type=field_type)
+                
+                # Copy from rax (source address) to field address
+                self.output.append("    mov rsi, rax")
+                self.output.append(f"    lea rdi, [rbp - {var_offset - field_offset}]")
+                self.output.append(f"    mov rcx, {field_size}")
+                self.output.append("    rep movsb")
+                continue
 
             self.gen_expression(field_expr, expected_type=field_type)
             
+            mem_loc = f"[rbp - {var_offset - field_offset}]"
+            
             if field_type == 'int32':
-                self.output.append(f"    mov dword ptr [rbp - {var_offset - field_offset}], eax")
+                self.output.append(f"    mov dword ptr {mem_loc}, eax")
             elif field_type == 'int64' or field_type == 'string' or field_type in self.enums or field_type.endswith('*'):
-                self.output.append(f"    mov qword ptr [rbp - {var_offset - field_offset}], rax")
+                self.output.append(f"    mov qword ptr {mem_loc}, rax")
             elif field_type == 'float32':
-                self.output.append(f"    movss [rbp - {var_offset - field_offset}], xmm0")
+                self.output.append(f"    movss {mem_loc}, xmm0")
             elif field_type == 'float64':
-                self.output.append(f"    movsd [rbp - {var_offset - field_offset}], xmm0")
+                self.output.append(f"    movsd {mem_loc}, xmm0")
             elif field_type == 'char' or field_type == 'int8':
-                self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
+                self.output.append(f"    mov byte ptr {mem_loc}, al")
             elif field_type == 'int16':
-                self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+                self.output.append(f"    mov word ptr {mem_loc}, ax")
             elif field_type in self.structs:
                 # Struct copy (non-array field)
                 sz = self.get_struct_size(field_type)
                 self.output.append("    mov rsi, rax")
-                self.output.append(f"    lea rdi, [rbp - {var_offset - field_offset}]")
+                self.output.append(f"    lea rdi, {mem_loc}")
                 self.output.append(f"    mov rcx, {sz}")
                 self.output.append("    rep movsb")
 
@@ -1026,7 +1047,8 @@ class CodeGen:
                 if expr.value not in self.string_literals:
                     label = self.new_label("str_lit")
                     self.string_literals[expr.value] = label
-                label = self.string_literals[expr.value]
+                else:
+                    label = self.string_literals[expr.value]
                 self.output.append(f"    lea rax, [rip + {label}]")
                 return 'string'
 
@@ -1232,10 +1254,22 @@ class CodeGen:
              temp_offset = self.alloc_temp(struct_name)
              
              field_offsets = self.struct_field_offsets.get(struct_name, {})
+             real_field_types = {fn: ft for ft, fn in self.structs.get(struct_name, [])}
              
-             for field_name, field_type, field_expr in expr.field_values:
+             for field_name, field_type_unused, field_expr in expr.field_values:
                   if field_name not in field_offsets: continue
                   offset = field_offsets[field_name]
+                  field_type = real_field_types.get(field_name, field_type_unused)
+                  
+                  if '[' in field_type and not field_type.endswith('[]') and not isinstance(field_expr, ArrayLiteralExpr):
+                       # Expression assigned to fixed-size array field
+                       sz = self.get_type_size(field_type)
+                       self.gen_expression(field_expr, expected_type=field_type) # Should return pointer to array data
+                       self.output.append("    mov rsi, rax")
+                       self.output.append(f"    lea rdi, [rbp - {temp_offset - offset}]")
+                       self.output.append(f"    mov rcx, {sz}")
+                       self.output.append("    rep movsb")
+                       continue
                   
                   self.gen_expression(field_expr, expected_type=field_type)
                   
