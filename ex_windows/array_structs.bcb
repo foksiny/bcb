@@ -1,0 +1,34 @@
+<outtype: win64>
+// EXPECT: int: 10\nint: 40\nint: 20\nint: 30\nchar: a\nchar: c\nchar: b\nchar: d\n
+
+data {
+    string fmt_i : "int: %d\n"
+    string fmt_c : "char: %c\n"
+    struct Test {
+        int32 nums[4];
+        char chars[4];
+    }
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    Test tst = { nums: int32[] {10, 40, 20, 30}, chars: char[] {'a', 'c', 'b', 'd'} };
+    call print_test(Test tst);
+    return int32 0;
+}
+
+print_test(v: Test) -> void {
+    int32 lens[2] = {length(v.nums), length(v.chars)};
+    int32 i = 0;
+    int32 j = 0;
+    $while int32 i < int32 lens[0]
+        call printf(string fmt_i, int32 v.nums[i]);
+        md int32 i = i + 1;
+    $endwhile
+    $while int32 j < int32 lens[1]
+        call printf(string fmt_c, char v.chars[j]);
+        md int32 j = j + 1;
+    $endwhile
+    return void;
+}

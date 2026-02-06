@@ -99,10 +99,12 @@ class SemanticAnalyzer:
         if actual in self.enums and target in ['int64', 'int32', 'int16', 'int8']:
              return
 
-        # Array compatibility (e.g. int32[] = int64[] from literal)
-        if isinstance(target, str) and target.endswith('[]') and isinstance(actual, str) and actual.endswith('[]'):
-             target_elem = target[:-2]
-             actual_elem = actual[:-2]
+        # Array compatibility (e.g. int32[] = int64[] from literal or int32[10])
+        if isinstance(target, str) and '[' in target and isinstance(actual, str) and '[' in actual:
+             t_bracket = target.find('[')
+             a_bracket = actual.find('[')
+             target_elem = target[:t_bracket]
+             actual_elem = actual[:a_bracket]
              if self.is_type_compatible(target_elem, actual_elem):
                   return
 
@@ -455,8 +457,9 @@ class SemanticAnalyzer:
                                 if idx < 0 or idx >= decl_node.array_size:
                                      self.pre(f"Array access out of bounds: index {idx} on array of size {decl_node.array_size}", expr, hint="Accessing memory outside array boundaries can lead to segments faults or memory corruption.")
 
-                 if arr_type.endswith('[]'):
-                     return arr_type[:-2]
+                 if '[' in arr_type:
+                     bracket_pos = arr_type.find('[')
+                     return arr_type[:bracket_pos]
                  elif arr_type.endswith('*'):
                      return arr_type[:-1]
                  return "unknown"

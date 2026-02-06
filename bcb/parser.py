@@ -660,10 +660,17 @@ class Parser:
         
         if is_type:
             type_name = self.consume().value
-            # Handle pointers (e.g. int32* x)
-            while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                self.consume()
-                type_name += '*'
+            # Handle pointers and array brackets (e.g. int32* x, int32[] x)
+            while True:
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
+                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume() # [
+                    self.consume(TokenType.SYMBOL, ']') # ]
+                    type_name += '[]'
+                else:
+                    break
 
             if self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
                 # type(expr)
@@ -861,7 +868,17 @@ class Parser:
         while self.peek().type != TokenType.SYMBOL or self.peek().value != '}':
             field_name = self.consume(TokenType.IDENTIFIER).value
             self.consume(TokenType.SYMBOL, ':')
-            field_type = self.consume(TokenType.KEYWORD).value
+            field_type = self.consume().value
+            while True:
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    field_type += '*'
+                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume() # [
+                    self.consume(TokenType.SYMBOL, ']') # ]
+                    field_type += '[]'
+                else:
+                    break
             field_expr = self.parse_expression()
             field_values.append((field_name, field_type, field_expr))
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':

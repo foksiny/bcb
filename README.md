@@ -242,6 +242,43 @@ export main(void) -> int32 {
 }
 ```
 
+### Arrays inside Structs
+Structs can contain fixed-size arrays as fields. These arrays are stored contiguously within the struct's memory layout.
+
+**Declaration:**
+```bcb
+data {
+    struct Player {
+        int32 id;
+        int32 scores[3]; // Fixed-size array inside struct
+        char name[16];   // Fixed-size char array
+    }
+}
+```
+
+**Initialization & Access:**
+```bcb
+export main(void) -> int32 {
+    // Initializing with an array literal
+    Player p = { 
+        id: int32 1, 
+        scores: int32[] {10, 20, 30}, 
+        name: char[] {'A', 'l', 'e', 'x'} 
+    };
+    
+    // Accessing an array element within a struct
+    int32 first_score = p.scores[0];
+    
+    // Modifying an element
+    md int32 p.scores[1] = 50;
+    
+    // Using length() on struct array fields
+    int32 num_scores = length(p.scores); // Returns 3
+    
+    return int32 0;
+}
+```
+
 ### Enums: Named Integers
 Enums are simple integer mappings (0, 1, 2...).
 ```bcb

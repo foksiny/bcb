@@ -243,30 +243,42 @@ class CodeGen:
                          self.output.append(f"    movsd {mem_loc}, xmm0")
                      elif base_type == 'int32':
                          self.output.append(f"    mov dword ptr {mem_loc}, eax")
-                     elif base_type == 'int64' or base_type.endswith('*'):
+                     elif base_type == 'int64' or base_type.endswith('*') or base_type == 'string' or base_type in self.enums:
                          self.output.append(f"    mov qword ptr {mem_loc}, rax")
                      elif base_type == 'char' or base_type == 'int8':
                          self.output.append(f"    mov byte ptr {mem_loc}, al")
                      elif base_type == 'int16':
                          self.output.append(f"    mov word ptr {mem_loc}, ax")
+                     elif base_type in self.structs:
+                         # Struct copy inside array
+                         sz = self.get_struct_size(base_type)
+                         self.output.append("    mov rsi, rax")
+                         self.output.append(f"    lea rdi, {mem_loc}")
+                         self.output.append(f"    mov rcx, {sz}")
+                         self.output.append("    rep movsb")
                  continue
 
             self.gen_expression(field_expr, expected_type=field_type)
             
             if field_type == 'int32':
                 self.output.append(f"    mov dword ptr [rbp - {var_offset - field_offset}], eax")
-            elif field_type == 'int64':
+            elif field_type == 'int64' or field_type == 'string' or field_type in self.enums or field_type.endswith('*'):
                 self.output.append(f"    mov qword ptr [rbp - {var_offset - field_offset}], rax")
             elif field_type == 'float32':
                 self.output.append(f"    movss [rbp - {var_offset - field_offset}], xmm0")
             elif field_type == 'float64':
                 self.output.append(f"    movsd [rbp - {var_offset - field_offset}], xmm0")
-            elif field_type == 'char':
-                self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
-            elif field_type == 'int8':
+            elif field_type == 'char' or field_type == 'int8':
                 self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
             elif field_type == 'int16':
                 self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+            elif field_type in self.structs:
+                # Struct copy (non-array field)
+                sz = self.get_struct_size(field_type)
+                self.output.append("    mov rsi, rax")
+                self.output.append(f"    lea rdi, [rbp - {var_offset - field_offset}]")
+                self.output.append(f"    mov rcx, {sz}")
+                self.output.append("    rep movsb")
 
     def emit_global_constant(self, type_name, expr):
         """Emits a constant value for an initializer in the .data section."""
@@ -382,10 +394,12 @@ class CodeGen:
         for i, (pname, ptype) in enumerate(func.params):
             self.next_local_offset += 8
             self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
-            # If param is array, treat as pointer for code generation
+            # If param is array or struct, treat as pointer for code generation
             local_type = ptype
             if ptype.endswith('[]'):
                  local_type = ptype[:-2] + "*"
+            elif ptype in self.structs:
+                 local_type = ptype + "*"
             self.locals[pname] = (self.next_local_offset, local_type)
             
             is_float = ptype in ['float32', 'float64']
@@ -683,18 +697,22 @@ class CodeGen:
                     # Store the value in the field
                     if field_type == 'int32':
                         self.output.append(f"    mov dword ptr [rbp - {var_offset - field_offset}], eax")
-                    elif field_type == 'int64':
+                    elif field_type == 'int64' or field_type == 'string' or field_type in self.enums or field_type.endswith('*'):
                         self.output.append(f"    mov qword ptr [rbp - {var_offset - field_offset}], rax")
                     elif field_type == 'float32':
                         self.output.append(f"    movss [rbp - {var_offset - field_offset}], xmm0")
                     elif field_type == 'float64':
                         self.output.append(f"    movsd [rbp - {var_offset - field_offset}], xmm0")
-                    elif field_type == 'char':
-                         self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
-                    elif field_type == 'int8':
+                    elif field_type == 'char' or field_type == 'int8':
                          self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
                     elif field_type == 'int16':
                          self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+                    elif field_type in self.structs:
+                        sz = self.get_struct_size(field_type)
+                        self.output.append("    mov rsi, rax")
+                        self.output.append(f"    lea rdi, [rbp - {var_offset - field_offset}]")
+                        self.output.append(f"    mov rcx, {sz}")
+                        self.output.append("    rep movsb")
             elif stmt.var_name in self.globals:
                 info = self.globals[stmt.var_name]
                 label = info['label']
@@ -769,12 +787,19 @@ class CodeGen:
                  self.output.append("    movsd [rdx], xmm0")
              elif base_type == 'int32':
                  self.output.append("    mov dword ptr [rdx], eax")
-             elif base_type == 'int64':
+             elif base_type == 'int64' or base_type == 'string' or base_type in self.enums or base_type.endswith('*'):
                  self.output.append("    mov qword ptr [rdx], rax")
              elif base_type == 'char' or base_type == 'int8':
                  self.output.append("    mov byte ptr [rdx], al")
              elif base_type == 'int16':
                  self.output.append("    mov word ptr [rdx], ax")
+             elif base_type in self.structs:
+                 # Struct copy to array element
+                 sz = self.get_struct_size(base_type)
+                 self.output.append("    mov rsi, rax")
+                 self.output.append("    mov rdi, rdx")
+                 self.output.append(f"    mov rcx, {sz}")
+                 self.output.append("    rep movsb")
              else:
                  self.output.append("    mov qword ptr [rdx], rax")
 
@@ -1016,11 +1041,14 @@ class CodeGen:
                     self.output.append(f"    movss xmm0, [rbp - {offset}]")
                 elif t == 'float64':
                     self.output.append(f"    movsd xmm0, [rbp - {offset}]")
-                elif t.endswith('[]'):
-                    # Array decay to pointer
+                elif t.endswith('[]') or t in self.structs:
+                    # Array or Struct decay to pointer
                     self.output.append(f"    lea rax, [rbp - {offset}]")
                     # Return pointer type
-                    t = t[:-2] + "*"
+                    if t.endswith('[]'):
+                        t = t[:-2] + "*"
+                    else:
+                        t = t + "*"
                 else:
                     self.output.append(f"    mov rax, [rbp - {offset}]")
                 
@@ -1107,8 +1135,8 @@ class CodeGen:
                     self.output.append("    movsx rax, byte ptr [rax]")
                 elif field_type == 'int16':
                     self.output.append("    movsx rax, word ptr [rax]")
-                elif field_type in self.structs:
-                    # Nested struct? return address which is already in rax
+                elif field_type in self.structs or '[' in field_type:
+                    # Nested struct or Array? return address which is already in rax
                     pass
                 else:
                     # Enums etc
@@ -1158,7 +1186,12 @@ class CodeGen:
              self.output.append("    pop rax")
              
              # Calculate offset
-             element_type = arr_type.replace('[]', '').replace('*', '') if arr_type else 'int64'
+             if '[' in arr_type:
+                 bracket_pos = arr_type.find('[')
+                 element_type = arr_type[:bracket_pos]
+             else:
+                 element_type = arr_type.replace('[]', '').replace('*', '') if arr_type else 'int64'
+             
              elm_size = self.get_type_size(element_type)
              
              self.output.append(f"    imul rcx, {elm_size}")
@@ -1230,9 +1263,22 @@ class CodeGen:
              raise RuntimeError("Array literals only supported in declaration initialization for now.")
         
         elif isinstance(expr, LengthExpr):
-             # Evaluate expression (should evaluate to pointer to array data)
-             self.gen_expression(expr.expr)
-             # Length is at [ptr - 8]
+             # For fixed-size arrays (type[size]), return the size as a constant
+             # We still need to call gen_expression to get the type and handle any side effects
+             t = self.gen_expression(expr.expr)
+             
+             if isinstance(t, str) and '[' in t and not t.endswith('[]'):
+                 # Fixed-size array: extract size from type string "type[size]"
+                 open_bracket = t.rfind('[')
+                 size_str = t[open_bracket+1:-1]
+                 try:
+                     size = int(size_str)
+                     self.output.append(f"    mov rax, {size}")
+                     return 'int64'
+                 except ValueError:
+                     pass
+             
+             # Header-based array (dynamic/pointer)
              self.output.append("    mov rax, [rax - 8]")
              return 'int64'
 
