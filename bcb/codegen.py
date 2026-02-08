@@ -1033,10 +1033,22 @@ class CodeGen:
                     return expected_type
                 return t
             elif isinstance(expr.value, int):
-                # Native int
-                # Use hex to ensure assembler handles 64-bit immediates correctly
-                val_hex = hex(expr.value)
-                self.output.append(f"    mov rax, {val_hex}")
+                # Native int - optimized loading
+                val = expr.value
+                
+                # Optimization: Use XOR for zero (faster, smaller encoding)
+                if val == 0:
+                    self.output.append("    xor eax, eax")  # Implicitly zeros RAX
+                # Optimization: Small positive values fit in 32-bit mov (smaller encoding)
+                elif 0 < val <= 0x7FFFFFFF:
+                    self.output.append(f"    mov eax, {val}")  # Zero-extends to RAX
+                # Optimization: -1 can use XOR + NOT or just mov
+                elif val == -1:
+                    self.output.append("    mov rax, -1")  # Or: xor eax, eax; not rax
+                else:
+                    # Full 64-bit immediate
+                    val_hex = hex(val)
+                    self.output.append(f"    mov rax, {val_hex}")
                 
                 if expected_type in ['float32', 'float64']:
                     self.gen_conversion('int64', expected_type)
@@ -1447,7 +1459,9 @@ class CodeGen:
                 self.output.append("    pop rax")
                 
                 if expr.op == '+':
-                    self.output.append("    add rax, rbx")
+                    # Optimization: Use LEA for add if both operands are in registers
+                    # LEA is faster on some microarchitectures and doesn't affect flags
+                    self.output.append("    lea rax, [rax + rbx]")
                 elif expr.op == '-':
                     self.output.append("    sub rax, rbx")
                 elif expr.op == '*':

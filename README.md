@@ -1,4 +1,6 @@
 # 🛠️ BCB: Basic Compiler Backend
+**Version 1.0.0 Final Release**
+
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
 **BCB** (Basic Compiler Backend) is a minimalist yet powerful compiler designed to bridge the gap between human-readable high-level logic and native **Windows x64 assembly/Linux x86_64 assembly** (`.s`). BCB is't just a language; it's a backend system that gives you total control over the machine while providing the comfort of modern syntax.
@@ -7,21 +9,24 @@
 
 ## 📖 Table of Contents
 1. [Core Philosophy](#core-philosophy)
-2. [Project Anatomy](#project-anatomy)
-3. [The Type System & Variables](#the-type-system--variables)
+2. [Quick Start](#quick-start)
+3. [Command Line Options](#command-line-options)
+4. [Optimization Levels](#optimization-levels)
+5. [Project Anatomy](#project-anatomy)
+6. [The Type System & Variables](#the-type-system--variables)
     - [Declaration Basics](#declaration-basics)
     - [Public Variables (Global Scope)](#public-variables-global-scope)
     - [Pointers & Addressing](#pointers--addressing)
-4. [The Semantic Analyzer & Diagnostics](#the-semantic-analyzer--diagnostics)
-5. [The Mutation System (md)](#the-mutation-system-md)
-6. [Data & Memory Structures (Structs, Enums, Arrays)](#data--memory-structures)
-7. [Structured Control Flow ($)](#structured-control-flow-)
-8. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
-9. [Advanced Math & Logic](#advanced-math--logic)
-10. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
-11. [Pointer Dereferencing Syntax](#pointer-dereferencing-syntax)
-12. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
-13. [Building and Testing](#building-and-testing)
+7. [The Semantic Analyzer & Diagnostics](#the-semantic-analyzer--diagnostics)
+8. [The Mutation System (md)](#the-mutation-system-md)
+9. [Data & Memory Structures (Structs, Enums, Arrays)](#data--memory-structures)
+10. [Structured Control Flow ($)](#structured-control-flow-)
+11. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
+12. [Advanced Math & Logic](#advanced-math--logic)
+13. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
+14. [Pointer Dereferencing Syntax](#pointer-dereferencing-syntax)
+15. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
+16. [Building and Testing](#building-and-testing)
 
 ---
 
@@ -30,10 +35,120 @@ BCB is built on the principle of **Deterministic Code Generation**.
 - **No Garbage Collection**: Memory is managed on the stack or via manual C calls.
 - **Explicit over Implicit**: State changes are marked with `md`.
 - **Transparency**: You can always read the generated `.s` file and see a 1:1 mapping to your BCB code.
+- **High Performance**: Advanced optimizations generate code that rivals C compilers.
 
 ---
 
-## 2. Project Anatomy
+## 2. Quick Start
+```bash
+# Install BCB
+pip install -e .
+
+# Check version
+bcb --version
+
+# Get help
+bcb --help
+
+# Compile a program
+bcb hello.bcb -o hello.s
+gcc hello.s -o hello.exe
+./hello.exe
+```
+
+---
+
+## 3. Command Line Options
+BCB provides a rich set of command-line options for controlling compilation:
+
+```
+USAGE:
+    bcb <input_file> [OPTIONS]
+
+OPTIONS:
+    -o <file>       Output assembly file (default: output.s)
+    -O0             No optimization
+    -O1             Basic optimizations (constant folding)
+    -O2             Standard optimizations (default)
+    -O3             Aggressive optimizations (maximum performance)
+    --stats         Show optimization statistics
+    --help, -h      Show help message
+    --version, -v   Show version information
+```
+
+### Examples
+```bash
+# Compile with default settings (O2)
+bcb main.bcb
+
+# Specify output file
+bcb main.bcb -o main.s
+
+# Maximum optimization with statistics
+bcb main.bcb -O3 --stats
+
+# No optimization (fastest compile time)
+bcb main.bcb -O0
+```
+
+---
+
+## 4. Optimization Levels
+BCB features a **powerful multi-pass optimizer** that can generate code rivaling or exceeding C compiler performance.
+
+| Level | Name | Description |
+|:------|:-----|:------------|
+| `-O0` | None | No optimization. Fastest compilation, largest output. |
+| `-O1` | Basic | Constant folding, algebraic simplifications. |
+| `-O2` | Standard | Dead code elimination, strength reduction. **(Default)** |
+| `-O3` | Aggressive | Function inlining, LICM, peephole optimization. |
+
+### Optimization Techniques
+
+#### High-Level (AST) Optimizations
+| Technique | Description | Example |
+|:----------|:------------|:--------|
+| **Constant Folding** | Evaluates expressions at compile time | `3 + 5` → `8` |
+| **Strength Reduction** | Replaces expensive ops with cheaper ones | `x * 8` → `x << 3` |
+| **Multiply Decomposition** | Breaks down multiplication into shifts | `x * 3` → `(x << 1) + x` |
+| **Dead Code Elimination** | Removes unreachable code after `return` | |
+| **Copy Propagation** | Propagates constant values through variables | |
+| **Function Inlining** | Inlines simple functions (O3 only) | |
+| **LICM** | Moves loop-invariant code outside loops | |
+| **Algebraic Simplification** | Simplifies expressions | `x - x` → `0` |
+
+#### Low-Level (Assembly) Optimizations
+| Technique | Description | Benefit |
+|:----------|:------------|:--------|
+| **XOR Zeroing** | `xor eax, eax` instead of `mov rax, 0` | Smaller, faster |
+| **32-bit MOV** | Uses `mov eax, val` for small values | Zero-extends automatically |
+| **LEA Arithmetic** | `lea rax, [rax + rbx]` for addition | Doesn't affect flags |
+| **Peephole Optimization** | Removes redundant push/pop sequences | |
+
+### Using `--stats`
+The `--stats` flag shows detailed optimization statistics:
+```bash
+$ bcb example.bcb -O3 --stats
+
+Optimization Statistics:
+  Constants folded:      12
+  Dead code eliminated:  3
+  CSE applied:           0
+  Loops unrolled:        0
+  Functions inlined:     2
+  Strength reductions:   5
+  Copy propagations:     4
+  Dead stores eliminated:0
+  LICM applied:          1
+  Peephole optimizations:8
+
+Optimization time: 2.34ms
+Total compile time: 15.67ms
+```
+
+---
+
+## 5. Project Anatomy
 Every BCB program follows a strict, predictable layout. Understanding this layout is key to mastering the language.
 
 ```bcb
@@ -480,18 +595,25 @@ When a function starts, BCB:
 
 ---
 
-## 13. Building and Testing
+## 16. Building and Testing
 ```bash
 # Install the bcb command
 pip install -e .
 
+# Check installation
+bcb --version
+bcb --help
+
 # Run the full test suite
 python test_all.py
 
-# Manual Compilation
-bcb examples/math.bcb -o math.s
+# Manual Compilation (with optimization)
+bcb examples/math.bcb -o math.s -O3
 gcc math.s -o math.exe
 ./math.exe
+
+# View optimization stats
+bcb examples/math.bcb -O3 --stats
 ```
 
 ---
