@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.0 Final Release**
+**Version 1.0.1**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -26,7 +26,8 @@
 13. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
 14. [Pointer Dereferencing Syntax](#pointer-dereferencing-syntax)
 15. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
-16. [Building and Testing](#building-and-testing)
+16. [Macros (Metaprogramming)](#macros-metaprogramming)
+17. [Building and Testing](#building-and-testing)
 
 ---
 
@@ -595,7 +596,43 @@ When a function starts, BCB:
 
 ---
 
-## 16. Building and Testing
+## 16. Macros (Metaprogramming)
+Macros in BCB allow you to define reusable code snippets that are expanded at compile time (text substitution). This is powerful for reducing boilerplate.
+
+**Definition:**
+Use the `macro` keyword. Parameters are typed in the definition for clarity, but the types are currently soft-checked (duck typing) during expansion.
+```bcb
+macro print(msg: string) {
+    call printf(string msg);
+}
+
+macro add(a: int32, b: int32) {
+    a + b
+}
+```
+
+**Usage:**
+Macros can be used as statements or expressions.
+```bcb
+export main(void) -> int32 {
+    print(string "Hello");  // Expands to: call printf(string "Hello");
+    
+    int32 x = 10;
+    int32 y = 20;
+    int32 res = add(x, y);  // Expands to: int32 res = x + y;
+    
+    return int32 0;
+}
+```
+
+**Key Features:**
+- **Text Substitution**: The body of the macro is injected directly into the code where it is called.
+- **Statement & Expression Support**: Can be used as a standalone statement or part of an expression.
+- **Parametrized**: Arguments passed to the macro replace the parameter names in the body.
+
+---
+
+## 17. Building and Testing
 ```bash
 # Install the bcb command
 pip install -e .

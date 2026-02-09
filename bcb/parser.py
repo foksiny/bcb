@@ -219,6 +219,7 @@ class Parser:
         self.pos = 0
         self.enum_names = set()  # Track known enum names
         self.struct_names = set() # Track known struct names
+        self.macros = {} # Track known macros
         self.base_dir = base_dir
         self.imported_files = imported_files if imported_files is not None else set()
 
@@ -256,6 +257,8 @@ class Parser:
             elif token.type == TokenType.KEYWORD:
                 if token.value == 'data':
                     data_block = self.parse_data_block()
+                elif token.value == 'macro':
+                    self.parse_macro_def()
                 elif token.value == 'define':
                     declarations.append(self.parse_function_decl())
                 elif token.value == 'export':
@@ -289,6 +292,7 @@ class Parser:
                                 data_block.enums.extend(import_program.data_block.enums)
                                 # Also update enum_names from the imported parser
                                 self.enum_names.update(import_parser.enum_names)
+                                self.macros.update(import_parser.macros)
                             
                             # Merge outtype if not already set
                             if not outtype:
@@ -453,6 +457,58 @@ class Parser:
         self.consume(TokenType.SYMBOL, '}')
         return FunctionDef(name, params, return_type, body, is_exported, start_token.line, start_token.column)
 
+    def parse_macro_def(self):
+        self.consume(TokenType.KEYWORD, 'macro')
+        name = self.consume(TokenType.IDENTIFIER).value
+        self.consume(TokenType.SYMBOL, '(')
+        
+        # Parse params (name: type, ...) but we only care about names for substitution
+        param_names = []
+        while self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
+            p_name = self.consume(TokenType.IDENTIFIER).value
+            self.consume(TokenType.SYMBOL, ':')
+            # Skip type
+            type_token = self.peek()
+            if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                 raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+            self.consume() # base type
+            while True:
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume()
+                    self.consume(TokenType.SYMBOL, ']')
+                # Handle ...args style varargs for macros? Example uses ...args in define but specific known params in macro
+                # Given 'macro add()', empty params. 'macro print(msg: string)', typed params. 
+                # Assuming standard type parsing logic applies but result is discard.
+                else:
+                    break
+            
+            param_names.append(p_name)
+            
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
+                self.consume()
+        self.consume(TokenType.SYMBOL, ')')
+        
+        self.consume(TokenType.SYMBOL, '{')
+        
+        # Capture body tokens until matching }
+        body_tokens = []
+        brace_count = 1
+        while brace_count > 0:
+            token = self.consume()
+            if token.type == TokenType.SYMBOL:
+                if token.value == '{':
+                    brace_count += 1
+                elif token.value == '}':
+                    brace_count -= 1
+            
+            if brace_count > 0:
+                body_tokens.append(token)
+        
+        # Store macro
+        self.macros[name] = (param_names, body_tokens)
+
     def parse_params(self):
         params = []
         if self.peek().type == TokenType.KEYWORD and self.peek().value == 'void':
@@ -496,6 +552,24 @@ class Parser:
 
     def parse_statement(self):
         token = self.peek()
+        
+        # Allow empty statement
+        if token.type == TokenType.SYMBOL and token.value == ';':
+             self.consume()
+             return None
+
+        if token.type == TokenType.IDENTIFIER and token.value in self.macros:
+             self.expand_macro_invocation()
+             
+             # Check if we reached end of block or control structure after expansion
+             next_tok = self.peek()
+             if next_tok.type == TokenType.SYMBOL and next_tok.value == '}':
+                 return None
+             if next_tok.type == TokenType.KEYWORD and next_tok.value in ['$elseif', '$else', '$endif', '$endwhile']:
+                 return None
+                 
+             return self.parse_statement()
+
         if token.type == TokenType.KEYWORD:
             if token.value == 'call':
                 return self.parse_call_stmt()
@@ -767,6 +841,14 @@ class Parser:
 
     def parse_primary(self):
         token = self.peek()
+        if token.type == TokenType.IDENTIFIER and token.value in self.macros:
+             self.expand_macro_invocation()
+             # We need to re-parse from the start of the injected tokens.
+             # parse_expression calls parse_primary.
+             # If we call parse_expression() here, it parses the *full* expression starting with the macro expansion.
+             # This is correct.
+             return self.parse_expression() # Recurse
+
         if token.type == TokenType.NUMBER:
             return LiteralExpr(self.consume().value, token.line, token.column)
         elif token.type == TokenType.STRING:
@@ -928,3 +1010,66 @@ class Parser:
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, ';')
         return CallExpr(name, args, token.line, token.column)
+
+    def expand_macro_invocation(self):
+        name = self.consume(TokenType.IDENTIFIER).value
+        
+        if name not in self.macros:
+            # Should not happen if called correctly
+             raise RuntimeError(f"Unknown macro {name}")
+
+        param_names, body_tokens = self.macros[name]
+        
+        self.consume(TokenType.SYMBOL, '(')
+        args_tokens = []
+        
+        # If not immediately closing parenthesis, parse args
+        if self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
+            while True:
+                # Capture arg tokens
+                current_arg = []
+                paren_count = 0
+                brace_count = 0
+                bracket_count = 0
+                
+                while True:
+                    t = self.peek()
+                    if t.type == TokenType.SYMBOL:
+                        if t.value == '(': paren_count += 1
+                        elif t.value == ')':
+                             if paren_count == 0 and brace_count == 0 and bracket_count == 0: break
+                             paren_count -= 1
+                        elif t.value == '[': bracket_count += 1
+                        elif t.value == ']': bracket_count -= 1
+                        elif t.value == '{': brace_count += 1
+                        elif t.value == '}': brace_count -= 1
+                        elif t.value == ',':
+                             if paren_count == 0 and brace_count == 0 and bracket_count == 0: break
+                        
+                    current_arg.append(self.consume())
+                
+                args_tokens.append(current_arg)
+                
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
+                    self.consume()
+                else:
+                    break
+        
+        self.consume(TokenType.SYMBOL, ')')
+        
+        # Check arg count
+        if len(args_tokens) != len(param_names):
+             raise RuntimeError(f"Macro {name} expects {len(param_names)} args, got {len(args_tokens)} at line {self.peek().line}")
+             
+        # Expand
+        mapping = dict(zip(param_names, args_tokens))
+        expanded = []
+        for t in body_tokens:
+            if t.type == TokenType.IDENTIFIER and t.value in mapping:
+                expanded.extend(mapping[t.value])
+            else:
+                # We reuse the token. Note: Line numbers will point to macro definition
+                expanded.append(t)
+        
+        # Inject at pos
+        self.tokens[self.pos:self.pos] = expanded
