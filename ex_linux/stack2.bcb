@@ -1,0 +1,28 @@
+<outtype: linux64>
+// EXPECT: 10\n10\n10\n
+data {
+    string fmt : "%d\n"
+}
+
+define printf(msg: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    push int32 10;
+    push int32 20;
+    swap int32; // swap the top two elements of the stack
+
+    int32 a = no_value;
+    int32 b = no_value;
+    pop int32 a;
+    call printf(string fmt, int32 a);
+
+    push int32 a;
+    dup int32; // duplicate the top element of the stack
+    pop int32 a;
+    pop int32 b;
+    call printf(string fmt, int32 a);
+    call printf(string fmt, int32 b);
+
+    pop int32 a; // Clean up the remaining '20' from the stack
+    return int32 0;
+}

@@ -209,6 +209,16 @@ class PopStmt(ASTNode):
         self.type_name = type_name
         self.var_name = var_name
 
+class SwapStmt(ASTNode):
+    def __init__(self, type_name, line=0, column=0):
+        super().__init__(line, column)
+        self.type_name = type_name
+
+class DupStmt(ASTNode):
+    def __init__(self, type_name, line=0, column=0):
+        super().__init__(line, column)
+        self.type_name = type_name
+
 class NoValueExpr(ASTNode):
     def __init__(self, line=0, column=0):
         super().__init__(line, column)
@@ -669,6 +679,28 @@ class Parser:
                 var_name = self.consume(TokenType.IDENTIFIER).value
                 self.consume(TokenType.SYMBOL, ';')
                 return PopStmt(type_name, var_name, token.line, token.column)
+            elif token.value == 'swap':
+                self.consume()
+                type_token = self.peek()
+                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+                type_name = self.consume().value
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
+                self.consume(TokenType.SYMBOL, ';')
+                return SwapStmt(type_name, token.line, token.column)
+            elif token.value == 'dup':
+                self.consume()
+                type_token = self.peek()
+                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+                type_name = self.consume().value
+                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                    self.consume()
+                    type_name += '*'
+                self.consume(TokenType.SYMBOL, ';')
+                return DupStmt(type_name, token.line, token.column)
             elif token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
                 # Variable declaration, including pointer types (e.g., int32* ptr)
                 type_name = self.consume().value

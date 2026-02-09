@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.1**
+**Version 1.0.2**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -505,6 +505,9 @@ push int32 42;     // Pushes 42 (padded to 64-bit on stack)
 
 pop int32 val1;    // Pops into variable val1
 pop int64 val2;    // Pops into variable val2
+
+swap int64;        // Swaps the top two elements
+dup int32;         // Duplicates the top element
 ```
 
 ---

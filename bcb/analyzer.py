@@ -336,6 +336,31 @@ class SemanticAnalyzer:
             if var_type:
                 self.check_type_compatibility(var_type, stmt.type_name, stmt, f"pop to '{stmt.var_name}'")
 
+        elif isinstance(stmt, SwapStmt):
+            if len(self.function_stack) < 2:
+                self.error("Stack underflow: swap requires at least 2 elements on stack", stmt)
+                return
+            
+            # Swap top two elements
+            top = self.function_stack.pop()
+            second = self.function_stack.pop()
+            self.function_stack.append(top)
+            self.function_stack.append(second)
+            
+            # Optionally check if swapped types match explicit type?
+            # For now we assume 'swap T' is just an instruction.
+
+        elif isinstance(stmt, DupStmt):
+            if not self.function_stack:
+                self.error("Stack underflow: dup requires at least 1 element on stack", stmt)
+                return
+            
+            top_type, top_node = self.function_stack[-1]
+            self.function_stack.append((top_type, stmt))
+            
+            if not self.is_type_compatible(stmt.type_name, top_type):
+                 self.warning(f"Dup type '{stmt.type_name}' does not match stack top type '{top_type}'", stmt)
+
     def analyze_lvalue(self, name, node):
         t = self.lookup(name)
         if not t:

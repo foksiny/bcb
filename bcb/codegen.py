@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr
 
 class CodeGen:
     def __init__(self, ast):
@@ -883,8 +883,22 @@ class CodeGen:
                  elif var_type in self.structs:
                      pass # popping struct? Not supported yet simple copy
                  else:
-                     # Default (pointers etc)
                      self.output.append(f"    mov [rbp - {offset}], rax")
+
+        elif isinstance(stmt, SwapStmt):
+            # Swap top two elements on stack.
+            # Since our stack implementation uses 8-byte slots for EVERYTHING (ints, floats, pointers),
+            # we can just swap the two 8-byte words at the top of the stack using registers.
+            self.output.append("    pop rax") # Top element (A)
+            self.output.append("    pop rdx") # Second element (B)
+            self.output.append("    push rax") # Push A (now deep)
+            self.output.append("    push rdx") # Push B (now top)
+            
+        elif isinstance(stmt, DupStmt):
+            # Duplicate top element.
+            # Since our stack implementation uses 8-byte slots, we just copy the top 8 bytes.
+            self.output.append("    mov rax, [rsp]")
+            self.output.append("    push rax")
     def gen_if_stmt(self, stmt):
         end_label = self.new_label("if_end")
         
@@ -1588,14 +1602,16 @@ class CodeGen:
              elif target_type == 'float64':
                   self.output.append(f"    movsd [rbp - {temp_offset}], xmm0")
              else:
-                  # For all integer types (int32, char, etc.), gen_expression returns
-                  # a value in RAX that is zero/sign extended to 64 bits.
-                  # We store the full 64 bits to the aligned stack slot to ensure
-                  # that reloading it later as 64 bits retrieves the correct value
-                  # (preserving upper zeros/sign bits).
+                  # For all integer types
                   self.output.append(f"    mov [rbp - {temp_offset}], rax")
                   
              arg_temps.append((temp_offset, target_type))
+
+
+
+        # Robust Call Sequence: Align stack to 16 bytes (Save RSP to RBX)
+        self.output.append("    mov rbx, rsp")
+        self.output.append("    and rsp, -16")
 
         # 2. Populate registers/stack from temps
         if self.is_linux:
@@ -1738,5 +1754,8 @@ class CodeGen:
             else:
                  self.output.append("    add rsp, 32")
                  
+        # Restore RSP from RBX
+        self.output.append("    mov rsp, rbx")
+
         # Reclaim temp locals
         self.next_local_offset = original_offset
