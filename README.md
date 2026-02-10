@@ -633,7 +633,7 @@ macro add(a: int32, b: int32) {
 Macros can be used as statements or expressions.
 ```bcb
 export main(void) -> int32 {
-    print(string "Hello");  // Expands to: call printf(string "Hello");
+    print("Hello");  // Expands to: call printf(string "Hello");
     
     int32 x = 10;
     int32 y = 20;
