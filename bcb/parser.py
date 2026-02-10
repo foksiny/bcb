@@ -233,6 +233,33 @@ class Parser:
         self.base_dir = base_dir
         self.imported_files = imported_files if imported_files is not None else set()
 
+    def parse_type(self):
+        # Base type (keyword, identifier, etc.)
+        type_token = self.peek()
+        if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
+            raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
+        
+        type_name = self.consume().value
+        
+        # Optional pointer suffix(es) or array brackets
+        while True:
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
+                self.consume()
+                type_name += '*'
+            elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                self.consume() # [
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == ']':
+                    self.consume() # ]
+                    type_name += '[]'
+                else:
+                    # Fixed size e.g. int32[10]
+                    size_token = self.consume(TokenType.NUMBER)
+                    self.consume(TokenType.SYMBOL, ']')
+                    type_name += f"[{size_token.value}]"
+            else:
+                break
+        return type_name
+
     def peek(self, offset=0):
         if self.pos + offset >= len(self.tokens):
             return self.tokens[-1]
@@ -425,17 +452,8 @@ class Parser:
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, '-')
         self.consume(TokenType.SYMBOL, '>')
-        # Return type (allow identifiers for structs/enums and pointer suffixes)
-        type_token = self.peek()
-        if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-            raise RuntimeError(f"Expected return type, got {type_token.type} at line {type_token.line}")
-        return_type = self.consume().value
-        while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-            self.consume()
-            return_type += '*'
-        while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-            self.consume()
-            return_type += '*'
+        
+        return_type = self.parse_type()
         self.consume(TokenType.SYMBOL, ';')
         return FunctionDecl(name, params, return_type, start_token.line, start_token.column)
 
@@ -450,14 +468,8 @@ class Parser:
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, '-')
         self.consume(TokenType.SYMBOL, '>')
-        # Return type (allow identifiers and pointer suffixes)
-        type_token = self.peek()
-        if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-            raise RuntimeError(f"Expected return type, got {type_token.type} at line {type_token.line}")
-        return_type = self.consume().value
-        while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-            self.consume()
-            return_type += '*'
+        
+        return_type = self.parse_type()
         self.consume(TokenType.SYMBOL, '{')
         body = []
         while self.peek().type != TokenType.SYMBOL or self.peek().value != '}':
@@ -539,22 +551,8 @@ class Parser:
                 else:
                     type_name = "..."
             else:
-                # Base type (keyword or identifier, e.g., int32, MyStruct)
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                    raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
-                type_name = self.consume().value
-                # Optional pointer suffix(es) or array brackets, e.g., int32*, int32[]
-                while True:
-                    if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                        self.consume()
-                        type_name += '*'
-                    elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
-                        self.consume() # [
-                        self.consume(TokenType.SYMBOL, ']') # ]
-                        type_name += '[]'
-                    else:
-                        break
+                # Base type
+                type_name = self.parse_type()
             params.append((name, type_name))
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()
@@ -585,10 +583,13 @@ class Parser:
                 return self.parse_call_stmt()
             elif token.value == 'return':
                 self.consume()
-                ret_type = self.consume(TokenType.KEYWORD).value
-                if ret_type == 'void':
-                    res_token = self.consume(TokenType.SYMBOL, ';')
-                    return ReturnStmt(ret_type, None, res_token.line, res_token.column)
+                # Check for void return
+                if self.peek().type == TokenType.KEYWORD and self.peek().value == 'void':
+                    self.consume()
+                    self.consume(TokenType.SYMBOL, ';')
+                    return ReturnStmt('void', None, token.line, token.column)
+                
+                ret_type = self.parse_type()
                 expr = self.parse_expression()
                 self.consume(TokenType.SYMBOL, ';')
                 # Use 'return' token loc? Yes, that was consumed earlier.
@@ -600,15 +601,7 @@ class Parser:
                 return self.parse_while_stmt()
             elif token.value == 'md':
                 self.consume()  # md
-                # Allow KEYWORD or IDENTIFIER for type_name (e.g., md int32 x = ... or md Color c = ...)
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                    raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
-                type_name = self.consume().value
-                # Optional pointer suffixes for md (e.g., md int32* ptr = 2;)
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
+                type_name = self.parse_type()
                 name = self.consume(TokenType.IDENTIFIER).value
                 
                 # Check if it's a field assignment (var.field)
@@ -653,69 +646,53 @@ class Parser:
                 return CmpTStmt(cond, target, token.line, token.column)
             elif token.value == 'push':
                 self.consume()
-                # Parse type
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
-                type_name = self.consume().value
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
-                
+                type_name = self.parse_type()
                 expr = self.parse_expression()
                 self.consume(TokenType.SYMBOL, ';')
                 return PushStmt(type_name, expr, token.line, token.column)
             elif token.value == 'pop':
                 self.consume()
-                # Parse type
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
-                type_name = self.consume().value
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
-                
+                type_name = self.parse_type()
                 var_name = self.consume(TokenType.IDENTIFIER).value
                 self.consume(TokenType.SYMBOL, ';')
                 return PopStmt(type_name, var_name, token.line, token.column)
             elif token.value == 'swap':
                 self.consume()
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
-                type_name = self.consume().value
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
+                type_name = self.parse_type()
                 self.consume(TokenType.SYMBOL, ';')
                 return SwapStmt(type_name, token.line, token.column)
             elif token.value == 'dup':
                 self.consume()
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                     raise RuntimeError(f"Expected type name, got {type_token.type} at line {type_token.line}")
-                type_name = self.consume().value
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
+                type_name = self.parse_type()
                 self.consume(TokenType.SYMBOL, ';')
                 return DupStmt(type_name, token.line, token.column)
             elif token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
-                # Variable declaration, including pointer types (e.g., int32* ptr)
-                type_name = self.consume().value
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
+                # Variable declaration
+                type_name = self.parse_type()
                 name = self.consume(TokenType.IDENTIFIER).value
                 
                 is_array = False
                 array_size = None
+                # Check for fixed-size array in declaration? (e.g. int32 x[10])
+                # Note: parse_type might have already consumed [10] if it was formatted like that.
+                # However, the current BCB syntax seems to separate type and array bracket sometimes.
+                # Let's support both.
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    # If it's something like 'int32 x[10]', parse_type got 'int32'.
                     self.consume() # [
                     size_token = self.consume(TokenType.NUMBER)
                     array_size = int(size_token.value)
                     self.consume(TokenType.SYMBOL, ']')
+                    is_array = True
+                
+                # If parse_type got 'int32[10]', then is_array is already somewhat encoded.
+                # CodeGen expects is_array and array_size for stack allocation.
+                if '[' in type_name and not type_name.endswith('[]'):
+                    # Extract size from type_name
+                    open_b = type_name.rfind('[')
+                    size_str = type_name[open_b+1:-1]
+                    array_size = int(size_str)
+                    type_name = type_name[:open_b]
                     is_array = True
                 
                 self.consume(TokenType.SYMBOL, '=')
@@ -765,18 +742,7 @@ class Parser:
                  is_type = True
         
         if is_type:
-            type_name = self.consume().value
-            # Handle pointers and array brackets (e.g. int32* x, int32[] x)
-            while True:
-                if self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    type_name += '*'
-                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
-                    self.consume() # [
-                    self.consume(TokenType.SYMBOL, ']') # ]
-                    type_name += '[]'
-                else:
-                    break
+            type_name = self.parse_type()
 
             if self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
                 # type(expr)
@@ -899,14 +865,7 @@ class Parser:
             self.consume(TokenType.SYMBOL, '(')
             args = []
             while self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
-                # Argument type (base keyword or identifier; pointer/deref handled in expression)
-                type_token = self.peek()
-                if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
-                    raise RuntimeError(f"Expected argument type, got {type_token.type} at line {type_token.line}")
-                arg_type = self.consume().value
-                while self.peek().type == TokenType.SYMBOL and self.peek().value == '*':
-                    self.consume()
-                    arg_type += '*'
+                arg_type = self.parse_type()
                 arg_expr = self.parse_expression()
                 args.append((arg_type, arg_expr))
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':

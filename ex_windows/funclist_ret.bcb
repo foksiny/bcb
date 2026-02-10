@@ -1,0 +1,27 @@
+<outtype: win64>
+// EXPECT: 0: 1\n1: 2\n2: 3\n
+data {
+    string fmt : "%d: %d\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main() -> int32 {
+    int32 mylist[3] = call ret_i32list();
+    call print_list(int32[] mylist);
+    return int32 0;
+}
+
+ret_i32list() -> int32[] {
+    return int32[] { int32 1, int32 2, int32 3 };
+}
+
+print_list(list: int32[]) -> void {
+    int32 i = 0;
+    int32 size = length(list);
+$while int32 i < int32 size
+    call printf(string fmt, int32 i, int32 list[i]);
+    md int32 i = i + 1;
+$endwhile
+    return void;
+}

@@ -594,6 +594,18 @@ class CodeGen:
                      elif isinstance(stmt.expr, LiteralExpr) and stmt.expr.value == 0:
                          # Zero init whole array?
                          pass
+                     else:
+                        # Generic expression for array init (e.g. CallExpr returning an array pointer)
+                        actual_type = self.gen_expression(stmt.expr, expected_type=element_type + '[]')
+                        
+                        # Assume RAX points to data start of returned array.
+                        # Copy data to our local buffer.
+                        sz = stmt.array_size * element_size
+                        self.output.append("    mov rsi, rax")
+                        self.output.append(f"    lea rdi, [rbp - {var_offset}]")
+                        self.output.append(f"    mov rcx, {sz}")
+                        self.output.append("    rep movsb")
+
                 else:
                     actual_type = self.gen_expression(stmt.expr, expected_type=None)
                     self.next_local_offset += 8
@@ -1318,9 +1330,53 @@ class CodeGen:
              return struct_name
 
         elif isinstance(expr, ArrayLiteralExpr):
-             # Should be handled in VarDeclStmt, but if used in expression usage?
-             # Could be "array literal as temporary"? Not supported deeply yet.
-             raise RuntimeError("Array literals only supported in declaration initialization for now.")
+             # Determine element type
+             element_type = 'int64'
+             if expected_type:
+                 element_type = expected_type.replace('[]', '').replace('*', '')
+             elif expr.values:
+                 # Try to infer from first element
+                 pass # We use default int64 if unknown
+             
+             count = len(expr.values)
+             element_size = self.get_type_size(element_type)
+             total_size = count * element_size + 8
+             # Allocation on stack for literal
+             aligned_size = ((total_size + 7) // 8) * 8
+             self.next_local_offset += aligned_size
+             self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
+             temp_block_bottom = self.next_local_offset
+             
+             # Store length header
+             self.output.append(f"    mov qword ptr [rbp - {temp_block_bottom}], {count}")
+             
+             # Data starts at [rbp - (temp_block_bottom - 8)]
+             data_offset = temp_block_bottom - 8
+             
+             for i, val_expr in enumerate(expr.values):
+                 actual_v_type = self.gen_expression(val_expr, expected_type=element_type)
+                 self.gen_conversion(actual_v_type, element_type)
+                 
+                 mem_loc = f"[rbp - {data_offset - i * element_size}]"
+                 
+                 if element_type == 'float32':
+                     self.output.append(f"    movss {mem_loc}, xmm0")
+                 elif element_type == 'float64':
+                     self.output.append(f"    movsd {mem_loc}, xmm0")
+                 elif element_type == 'int32':
+                     self.output.append(f"    mov dword ptr {mem_loc}, eax")
+                 elif element_type == 'int64' or element_type.endswith('*') or element_type == 'string':
+                     self.output.append(f"    mov qword ptr {mem_loc}, rax")
+                 elif element_type == 'char' or element_type == 'int8':
+                     self.output.append(f"    mov byte ptr {mem_loc}, al")
+                 elif element_type == 'int16':
+                     self.output.append(f"    mov word ptr {mem_loc}, ax")
+                 else:
+                     self.output.append(f"    mov qword ptr {mem_loc}, rax")
+             
+             # Return data start address in RAX
+             self.output.append(f"    lea rax, [rbp - {data_offset}]")
+             return element_type + '[]'
         
         elif isinstance(expr, LengthExpr):
              # For fixed-size arrays (type[size]), return the size as a constant

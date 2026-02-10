@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.2**
+**Version 1.0.3**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -437,6 +437,21 @@ md int32 numbers[1] = 99;
   // Call using [] syntax to pass the base address
   call print_ints(int32 arr[]);
   ```
+
+**Returning Lists from Functions:**
+BCB supports functions that return arrays/lists of any type. When a function returns a list, it typically returns a pointer to the data start of a hidden-header-managed array.
+```bcb
+ret_list() -> int32[] {
+    return int32[] { int32 1, int32 2, int32 3 };
+}
+
+export main() -> int32 {
+    int32 my_list[3] = call ret_list();
+    int32 val = my_list[1]; // 2
+    return int32 0;
+}
+```
+*Note: When assigning a returned list to a local array variable, the data is copied into the local variable's buffer.*
 
 **Advanced: Arrays of Structs**
 BCB allows you to nest structs within arrays for complex data handling:
