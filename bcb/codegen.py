@@ -1,8 +1,9 @@
 from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr
 
 class CodeGen:
-    def __init__(self, ast):
+    def __init__(self, ast, optimization_level: int = 3):
         self.ast = ast
+        self.optimization_level = optimization_level  # 0-3, higher = more aggressive
         self.output = []
         self.data_labels = {}
         self.float_literals = {}  # (value, type) -> label
@@ -24,6 +25,9 @@ class CodeGen:
         self.outtype = getattr(ast, "outtype", None) or "win64"
         self.is_linux = self.outtype.lower() == "linux64"
         self.is_windows = self.outtype.lower() == "win64"
+        # Optimization tracking
+        self._const_fold_cache = {}  # Cache for constant folding
+        self._reg_hints = {}  # Register allocation hints
 
     def new_label(self, prefix="L"):
         self.label_count += 1
@@ -2099,3 +2103,204 @@ class CodeGen:
 
         # Reclaim temp locals
         self.next_local_offset = original_offset
+
+    # =========================================================================
+    # NEW: Optimized Code Generation Methods
+    # =========================================================================
+    
+    def _emit_optimized_int_load(self, val: int):
+        """
+        Emit optimized integer load based on value.
+        Uses smallest encoding possible.
+        """
+        if val == 0:
+            # xor is smaller and faster than mov for zero
+            self.output.append("    xor eax, eax")
+        elif val == 1:
+            # inc is smaller for getting 1
+            self.output.append("    xor eax, eax")
+            self.output.append("    inc eax")
+        elif val == -1:
+            # dec from 0 gives -1
+            self.output.append("    xor eax, eax")
+            self.output.append("    dec eax")
+        elif 0 < val <= 0x7FFFFFFF:
+            # 32-bit mov zero-extends to 64-bit (smaller encoding)
+            self.output.append(f"    mov eax, {val}")
+        elif -0x80000000 <= val < 0:
+            # Negative 32-bit values
+            self.output.append(f"    mov eax, {val}")
+        else:
+            # Full 64-bit immediate
+            self.output.append(f"    mov rax, {val}")
+    
+    def _emit_optimized_add(self, val: int):
+        """
+        Emit optimized addition based on value.
+        """
+        if val == 0:
+            pass  # No-op
+        elif val == 1:
+            self.output.append("    inc rax")
+        elif val == -1:
+            self.output.append("    dec rax")
+        elif val > 0 and val <= 0x7FFFFFFF:
+            self.output.append(f"    add rax, {val}")
+        elif val < 0 and val >= -0x80000000:
+            # Use sub with positive value
+            self.output.append(f"    sub rax, {-val}")
+        else:
+            # Need to use register
+            self.output.append(f"    mov rcx, {val}")
+            self.output.append("    add rax, rcx")
+    
+    def _emit_optimized_mul(self, val: int):
+        """
+        Emit optimized multiplication using shifts and adds.
+        """
+        if val == 0:
+            self.output.append("    xor eax, eax")
+        elif val == 1:
+            pass  # No-op
+        elif val == -1:
+            self.output.append("    neg rax")
+        elif val > 0 and (val & (val - 1)) == 0:
+            # Power of 2: use shift
+            shift = val.bit_length() - 1
+            self.output.append(f"    shl rax, {shift}")
+        elif val == 3:
+            # x * 3 = (x << 1) + x
+            self.output.append("    mov rcx, rax")
+            self.output.append("    shl rax, 1")
+            self.output.append("    add rax, rcx")
+        elif val == 5:
+            # x * 5 = (x << 2) + x
+            self.output.append("    mov rcx, rax")
+            self.output.append("    shl rax, 2")
+            self.output.append("    add rax, rcx")
+        elif val == 6:
+            # x * 6 = (x << 2) + (x << 1)
+            self.output.append("    mov rcx, rax")
+            self.output.append("    shl rcx, 1")
+            self.output.append("    shl rax, 2")
+            self.output.append("    add rax, rcx")
+        elif val == 7:
+            # x * 7 = (x << 3) - x
+            self.output.append("    mov rcx, rax")
+            self.output.append("    shl rax, 3")
+            self.output.append("    sub rax, rcx")
+        elif val == 9:
+            # x * 9 = (x << 3) + x
+            self.output.append("    mov rcx, rax")
+            self.output.append("    shl rax, 3")
+            self.output.append("    add rax, rcx")
+        elif val == 10:
+            # x * 10 = (x << 3) + (x << 1)
+            self.output.append("    mov rcx, rax")
+            self.output.append("    shl rcx, 1")
+            self.output.append("    shl rax, 3")
+            self.output.append("    add rax, rcx")
+        else:
+            # General case
+            self.output.append(f"    imul rax, {val}")
+    
+    def _emit_optimized_div(self, val: int, is_signed: bool = True):
+        """
+        Emit optimized division using shifts for powers of 2.
+        """
+        if val == 0:
+            raise RuntimeError("Division by zero")
+        elif val == 1:
+            pass  # No-op
+        elif val == -1:
+            self.output.append("    neg rax")
+        elif val > 0 and (val & (val - 1)) == 0:
+            # Power of 2: use shift
+            shift = val.bit_length() - 1
+            if is_signed:
+                # For signed division, we need to handle sign
+                self.output.append("    mov rcx, rax")
+                self.output.append("    sar rcx, 63")  # Get sign bits
+                self.output.append(f"    shr rcx, {64 - shift}")  # Adjust for rounding
+                self.output.append("    add rax, rcx")  # Round toward zero
+                self.output.append(f"    sar rax, {shift}")
+            else:
+                self.output.append(f"    shr rax, {shift}")
+        else:
+            # General case: use idiv
+            self.output.append("    cqo")
+            self.output.append(f"    mov rcx, {val}")
+            self.output.append("    idiv rcx")
+    
+    def _emit_optimized_mod(self, val: int):
+        """
+        Emit optimized modulo using bitwise AND for powers of 2.
+        """
+        if val == 0:
+            raise RuntimeError("Modulo by zero")
+        elif val == 1:
+            self.output.append("    xor eax, eax")  # x % 1 = 0
+        elif val > 0 and (val & (val - 1)) == 0:
+            # Power of 2: use bitwise AND
+            self.output.append(f"    and rax, {val - 1}")
+        else:
+            # General case: use idiv, result in rdx
+            self.output.append("    cqo")
+            self.output.append(f"    mov rcx, {val}")
+            self.output.append("    idiv rcx")
+            self.output.append("    mov rax, rdx")
+    
+    def _emit_branch_hint(self, likely: bool):
+        """
+        Emit branch prediction hint for conditional jumps.
+        Uses Intel's branch hint prefixes.
+        """
+        if self.optimization_level >= 3:
+            # Note: Modern CPUs mostly ignore these, but they can help in some cases
+            if likely:
+                self.output.append("    # likely taken")
+            else:
+                self.output.append("    # unlikely taken")
+    
+    def _emit_optimized_comparison(self, left_type: str, op: str):
+        """
+        Emit optimized comparison sequence.
+        """
+        # Use test for comparison with zero (smaller encoding)
+        if op == '==' or op == '!=':
+            # test rax, rax is smaller than cmp rax, 0
+            self.output.append("    test rax, rax")
+        else:
+            self.output.append("    cmp rax, 0")
+    
+    def _should_use_lea(self, base_offset: int, index_scale: int = 0) -> bool:
+        """
+        Determine if LEA would be more efficient than multiple adds.
+        """
+        # LEA can compute base + index*scale + disp in one instruction
+        # More efficient when we have both base and index
+        return self.optimization_level >= 2 and (index_scale > 0 or base_offset != 0)
+    
+    def _emit_efficient_address(self, base_reg: str, offset: int, index_reg: str = None, scale: int = 1):
+        """
+        Emit the most efficient address calculation.
+        Uses LEA when beneficial.
+        """
+        if index_reg:
+            # Complex addressing: use LEA
+            if offset == 0:
+                self.output.append(f"    lea rax, [{base_reg} + {index_reg}*{scale}]")
+            else:
+                self.output.append(f"    lea rax, [{base_reg} + {index_reg}*{scale} + {offset}]")
+        elif offset != 0:
+            if self.optimization_level >= 2 and abs(offset) <= 0x7FFFFFFF:
+                # Use LEA for addition (doesn't affect flags)
+                self.output.append(f"    lea rax, [{base_reg} + {offset}]")
+            else:
+                self.output.append(f"    mov rax, {base_reg}")
+                if offset > 0:
+                    self.output.append(f"    add rax, {offset}")
+                else:
+                    self.output.append(f"    sub rax, {-offset}")
+        else:
+            self.output.append(f"    mov rax, {base_reg}")

@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.4**
+**Version 1.0.5**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 

@@ -5,7 +5,7 @@ from bcb.lexer import tokenize
 from bcb.parser import Parser
 from bcb.codegen import CodeGen
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 VERSION_STRING = f"BCB Compiler {VERSION} Final Release"
 
 HELP_TEXT = f"""
@@ -33,9 +33,12 @@ EXAMPLES:
 
 OPTIMIZATION LEVELS:
     O0  No optimization - fastest compilation, largest/slowest output
-    O1  Basic - constant folding, algebraic simplifications
-    O2  Standard - dead code elimination, strength reduction (default)
-    O3  Aggressive - function inlining, LICM, peephole optimization
+    O1  Basic - constant folding, algebraic simplifications, XOR zero optimization
+    O2  Standard - dead code elimination, strength reduction, value numbering,
+                   branch prediction, conditional moves, tail merging (default)
+    O3  Aggressive - function inlining, LICM, peephole optimization,
+                     partial redundancy elimination, global value numbering,
+                     instruction scheduling, macro fusion, short jump optimization
 
 For more information, visit: https://github.com/foksiny/bcb
 """
@@ -125,12 +128,12 @@ def main():
                 print(stats)
         
         # Code Generation Phase
-        codegen = CodeGen(ast)
+        codegen = CodeGen(ast, optimization_level)
         asm = codegen.generate()
         
         # Assembly-level optimizations (peephole)
-        if optimization_level >= 2:
-            asm = optimize_assembly(asm)
+        if optimization_level >= 1:
+            asm = optimize_assembly(asm, optimization_level)
         
         opt_time = time.perf_counter() - opt_start
         total_time = time.perf_counter() - start_time

@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="bcb",
-    version="1.0.4",
+    version="1.0.5",
     author="Antigravity",
-    description="A minimalist compiler for BCB (ByteCode Binary) language",
+    description="A minimalist compiler for BCB (Basic Compiler Backend) language",
     packages=find_packages(),
     entry_points={
         'console_scripts': [
