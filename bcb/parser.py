@@ -175,6 +175,17 @@ class LengthExpr(ASTNode):
         super().__init__(line, column)
         self.expr = expr
 
+class GetTypeExpr(ASTNode):
+    def __init__(self, expr, line=0, column=0):
+        super().__init__(line, column)
+        self.expr = expr
+
+class ArgsAccessExpr(ASTNode):
+    def __init__(self, name, index, line=0, column=0):
+        super().__init__(line, column)
+        self.name = name
+        self.index = index
+
 class LabelDef(ASTNode):
     def __init__(self, name, line=0, column=0):
         super().__init__(line, column)
@@ -859,6 +870,12 @@ class Parser:
             expr = self.parse_expression()
             self.consume(TokenType.SYMBOL, ')')
             return LengthExpr(expr, token.line, token.column)
+        elif token.type == TokenType.IDENTIFIER and token.value == 'gettype':
+            self.consume() # gettype
+            self.consume(TokenType.SYMBOL, '(')
+            expr = self.parse_expression()
+            self.consume(TokenType.SYMBOL, ')')
+            return GetTypeExpr(expr, token.line, token.column)
         elif token.type == TokenType.KEYWORD and token.value == 'call':
             self.consume()  # call
             name = self.consume(TokenType.IDENTIFIER).value
@@ -923,6 +940,17 @@ class Parser:
                          index = self.parse_expression()
                          self.consume(TokenType.SYMBOL, ']')
                          expr = ArrayAccessExpr(expr, index, bracket_token.line, bracket_token.column)
+                elif self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
+                    # Args access: myargs(y)
+                    paren_token = self.consume() # (
+                    index = self.parse_expression()
+                    self.consume(TokenType.SYMBOL, ')')
+                    # expr should be a VarRefExpr for the variadic param name
+                    if not isinstance(expr, VarRefExpr):
+                         # It might be a regular call, but in BCB calls use 'call' keyword.
+                         # This syntax is specifically for variadic arg access.
+                         pass
+                    expr = ArgsAccessExpr(expr.name if isinstance(expr, VarRefExpr) else expr, index, paren_token.line, paren_token.column)
                 else:
                     break
             

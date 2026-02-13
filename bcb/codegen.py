@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr
 
 class CodeGen:
     def __init__(self, ast):
@@ -17,6 +17,9 @@ class CodeGen:
         self.function_params = {} # name -> params list
         self.string_literals = {} # value -> label
         self.globals = {} # name -> {'label': str, 'type': str, 'init': ASTNode}
+        self.internal_functions = set()
+        self.variadic_info = {} # func_name -> (param_name, start_index)
+        self.pending_type_arrays = {} # label -> list of type strings
         # Target configuration
         self.outtype = getattr(ast, "outtype", None) or "win64"
         self.is_linux = self.outtype.lower() == "linux64"
@@ -79,6 +82,13 @@ class CodeGen:
             if isinstance(decl, (FunctionDef, FunctionDecl)):
                 self.functions[decl.name] = decl.return_type
                 self.function_params[decl.name] = decl.params
+                if isinstance(decl, FunctionDef):
+                    self.internal_functions.add(decl.name)
+                    # Check for variadic parameter
+                    for i, (pname, ptype) in enumerate(decl.params):
+                        if ptype.startswith("..."):
+                            self.variadic_info[decl.name] = (pname, i)
+                            break
         
         # 0. Process struct definitions
         if self.ast.data_block and self.ast.data_block.structs:
@@ -121,6 +131,14 @@ class CodeGen:
         # 3. Revert to original output and construct the final assembly
         self.output = original_output
         
+        # First, collect all type strings from pending type arrays into string_literals
+        # This ensures they are emitted in .rodata before we reference them in .data
+        for label, types in self.pending_type_arrays.items():
+            for t in types:
+                if t not in self.string_literals:
+                    sl_label = self.new_label("type_str")
+                    self.string_literals[t] = sl_label
+
         # Output the data section (strings and discovered float literals)
         if self.ast.data_block or self.float_literals or self.string_literals:
             # Windows uses .rdata, Linux typically uses .rodata
@@ -148,12 +166,18 @@ class CodeGen:
                 escaped_value = val.replace('"', '\\"')
                 self.output.append(f"    .asciz \"{escaped_value}\"")
 
+        # Output type arrays in .data section (they need runtime relocations for PIE)
+        if self.pending_type_arrays:
+            self.output.append(".section .data")
+            for label, types in self.pending_type_arrays.items():
+                self.output.append(f"{label}:")
+                for t in types:
+                    sl_label = self.string_literals[t]
+                    self.output.append(f"    .quad {sl_label}")
+
         # Output global variables in .data section
         if self.globals:
-            if self.is_linux:
-                self.output.append(".section .data")
-            else:
-                self.output.append(".section .data")
+            self.output.append(".section .data")
             
             for name, info in self.globals.items():
                 label = info['label']
@@ -371,6 +395,7 @@ class CodeGen:
 
 
     def gen_function(self, func):
+        self.current_function = func
         self.locals = {}
         # Count non-volatile registers to save
         pushed_count = 1 # rbx is always saved
@@ -411,6 +436,68 @@ class CodeGen:
             # Windows x64: rcx, rdx, r8, r9 shared
             arg_regs = ["rcx", "rdx", "r8", "r9"]
             float_arg_regs = ["xmm0", "xmm1", "xmm2", "xmm3"]
+
+        # Variadic Setup
+        if func.name in self.variadic_info:
+            vname, vstart = self.variadic_info[func.name]
+            if self.is_windows:
+                 # Spill registers to shadow space for contiguous access
+                 self.output.append("    mov [rbp + 16], rcx")
+                 self.output.append("    mov [rbp + 24], rdx")
+                 self.output.append("    mov [rbp + 32], r8")
+                 self.output.append("    mov [rbp + 40], r9")
+                 
+                 # Save count (rax) and types array (r10)
+                 amt_off = self.alloc_temp("int32")
+                 self.output.append(f"    mov [rbp - {amt_off}], rax")
+                 self.locals[f"__amount_{vname}"] = (amt_off, "int32")
+                 
+                 types_off = self.alloc_temp("string*")
+                 self.output.append(f"    mov [rbp - {types_off}], r10")
+                 self.locals[f"__types_{vname}"] = (types_off, "string*")
+            else:
+                 # Linux: Spill registers to stack for contiguous access
+                 # System V passes args in rdi, rsi, rdx, rcx, r8, r9 for integers
+                 # and xmm0-xmm7 for floats
+                 # Count is passed in R11 (to avoid conflict with AL for varargs)
+                 # Types array is in R10
+                 
+                 # First, allocate and save count (r11) and types array (r10)
+                 amt_off = self.alloc_temp("int32")
+                 self.output.append(f"    mov [rbp - {amt_off}], r11")
+                 self.locals[f"__amount_{vname}"] = (amt_off, "int32")
+                 
+                 types_off = self.alloc_temp("string*")
+                 self.output.append(f"    mov [rbp - {types_off}], r10")
+                 self.locals[f"__types_{vname}"] = (types_off, "string*")
+                 
+                 # Now allocate spill area for registers:
+                 # 6 integer regs (48 bytes) + 8 XMM regs (64 bytes) = 112 bytes
+                 self.next_local_offset += 112
+                 self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
+                 spill_base = self.next_local_offset
+                 
+                 # Spill the integer registers (at spill_base - 0 to spill_base - 48)
+                 self.output.append(f"    mov [rbp - {spill_base - 0}], rdi")
+                 self.output.append(f"    mov [rbp - {spill_base - 8}], rsi")
+                 self.output.append(f"    mov [rbp - {spill_base - 16}], rdx")
+                 self.output.append(f"    mov [rbp - {spill_base - 24}], rcx")
+                 self.output.append(f"    mov [rbp - {spill_base - 32}], r8")
+                 self.output.append(f"    mov [rbp - {spill_base - 40}], r9")
+                 
+                 # Spill the XMM registers (at spill_base - 48 to spill_base - 112)
+                 # We use movq to store the lower 64 bits (enough for float64)
+                 self.output.append(f"    movq [rbp - {spill_base - 48}], xmm0")
+                 self.output.append(f"    movq [rbp - {spill_base - 56}], xmm1")
+                 self.output.append(f"    movq [rbp - {spill_base - 64}], xmm2")
+                 self.output.append(f"    movq [rbp - {spill_base - 72}], xmm3")
+                 self.output.append(f"    movq [rbp - {spill_base - 80}], xmm4")
+                 self.output.append(f"    movq [rbp - {spill_base - 88}], xmm5")
+                 self.output.append(f"    movq [rbp - {spill_base - 96}], xmm6")
+                 self.output.append(f"    movq [rbp - {spill_base - 104}], xmm7")
+                 
+                 # Store spill base for ArgsAccessExpr
+                 self.locals[f"__linux_spill_base_{vname}"] = (spill_base, "int64")
         
         for i, (pname, ptype) in enumerate(func.params):
             self.next_local_offset += 8
@@ -542,7 +629,8 @@ class CodeGen:
                      # self.next_local_offset points to bottom of block. 
                      # data_offset = self.next_local_offset - 8
                      var_offset = self.next_local_offset - 8
-                     self.locals[stmt.name] = (var_offset, element_type + '[]')
+                     # Store full type with size for fixed-size arrays (e.g., int32[10])
+                     self.locals[stmt.name] = (var_offset, element_type + f'[{stmt.array_size}]')
                      
                      # Initialization
                      if isinstance(stmt.expr, ArrayLiteralExpr):
@@ -774,17 +862,21 @@ class CodeGen:
         elif isinstance(stmt, ArrayAssignStmt):
              # 1. Calc address of element
              if stmt.arr_name in self.locals:
-                 offset, t = self.locals[stmt.arr_name]
-                 if t.endswith('[]'):
-                      # Local array
-                      self.output.append(f"    lea rax, [rbp - {offset}]")
-                      base_type = t[:-2]
-                 else:
-                      # Pointer
-                      self.output.append(f"    mov rax, [rbp - {offset}]")
-                      base_type = t[:-1] if t.endswith('*') else 'int64'
-                 
-                 self.output.append("    push rax")
+                  offset, t = self.locals[stmt.arr_name]
+                  if t.endswith('[]'):
+                       # Dynamic array (no size): load the pointer value
+                       self.output.append(f"    mov rax, [rbp - {offset}]")
+                       base_type = t[:-2]
+                  elif '[' in t:
+                       # Fixed-size array: get address of inline data
+                       self.output.append(f"    lea rax, [rbp - {offset}]")
+                       base_type = t[:t.rfind('[')]
+                  else:
+                       # Pointer
+                       self.output.append(f"    mov rax, [rbp - {offset}]")
+                       base_type = t[:-1] if t.endswith('*') else 'int64'
+                  
+                  self.output.append("    push rax")
              elif stmt.arr_name in self.globals:
                   info = self.globals[stmt.arr_name]
                   label = info['label']
@@ -1101,14 +1193,20 @@ class CodeGen:
                     self.output.append(f"    movss xmm0, [rbp - {offset}]")
                 elif t == 'float64':
                     self.output.append(f"    movsd xmm0, [rbp - {offset}]")
-                elif t.endswith('[]') or t in self.structs:
-                    # Array or Struct decay to pointer
+                elif t.endswith('[]'):
+                    # Dynamic array (no size): load the pointer value
+                    self.output.append(f"    mov rax, [rbp - {offset}]")
+                    # Return pointer type
+                    t = t[:-2] + "*"
+                elif '[' in t:
+                    # Fixed-size array (e.g., int32[10]): get address of inline data
                     self.output.append(f"    lea rax, [rbp - {offset}]")
                     # Return pointer type
-                    if t.endswith('[]'):
-                        t = t[:-2] + "*"
-                    else:
-                        t = t + "*"
+                    t = t[:t.rfind('[')] + "*"
+                elif t in self.structs:
+                    # Struct decay to pointer
+                    self.output.append(f"    lea rax, [rbp - {offset}]")
+                    t = t + "*"
                 else:
                     self.output.append(f"    mov rax, [rbp - {offset}]")
                 
@@ -1155,6 +1253,13 @@ class CodeGen:
 
         # 4.5. Handle FieldAccessExpr (e.g., p.x)
         elif isinstance(expr, FieldAccessExpr):
+            # Check for variadic amount
+            if expr.field_name == "amount" and isinstance(expr.obj, VarRefExpr):
+                pname = expr.obj.name
+                if f"__amount_{pname}" in self.locals:
+                    off, _ = self.locals[f"__amount_{pname}"]
+                    self.output.append(f"    mov rax, [rbp - {off}]")
+                    return "int32"
             # 1. Get base address and struct type
             if isinstance(expr.obj, VarRefExpr) and expr.obj.name in self.locals:
                 var_offset, struct_type = self.locals[expr.obj.name]
@@ -1223,7 +1328,14 @@ class CodeGen:
              # 1. Base Address (decayed pointer)
              if isinstance(expr.arr, VarRefExpr) and expr.arr.name in self.locals:
                   offset, t = self.locals[expr.arr.name]
+                  # Check if it's a dynamic array (int32[]) vs fixed-size (int32[10])
+                  # Dynamic arrays have '[]' suffix (no size), fixed-size arrays have '[N]'
                   if t.endswith('[]'):
+                       # Dynamic array: load the pointer value
+                       self.output.append(f"    mov rax, [rbp - {offset}]")
+                       arr_type = t
+                  elif '[' in t:
+                       # Fixed-size array: get address of inline data
                        self.output.append(f"    lea rax, [rbp - {offset}]")
                        arr_type = t
                   else:
@@ -1247,10 +1359,10 @@ class CodeGen:
              
              # Calculate offset
              if '[' in arr_type:
-                 bracket_pos = arr_type.find('[')
-                 element_type = arr_type[:bracket_pos]
+                  bracket_pos = arr_type.find('[')
+                  element_type = arr_type[:bracket_pos]
              else:
-                 element_type = arr_type.replace('[]', '').replace('*', '') if arr_type else 'int64'
+                  element_type = arr_type.replace('[]', '').replace('*', '') if arr_type else 'int64'
              
              elm_size = self.get_type_size(element_type)
              
@@ -1380,7 +1492,28 @@ class CodeGen:
         
         elif isinstance(expr, LengthExpr):
              # For fixed-size arrays (type[size]), return the size as a constant
-             # We still need to call gen_expression to get the type and handle any side effects
+             # For dynamic arrays, read from the length header
+             
+             # First, try to get the original array type directly from the variable
+             if isinstance(expr.expr, VarRefExpr) and expr.expr.name in self.locals:
+                  offset, t = self.locals[expr.expr.name]
+                  if '[' in t and not t.endswith('[]'):
+                      # Fixed-size array: extract size from type string "type[size]"
+                      open_bracket = t.rfind('[')
+                      size_str = t[open_bracket+1:-1]
+                      try:
+                          size = int(size_str)
+                          self.output.append(f"    mov rax, {size}")
+                          return 'int64'
+                      except ValueError:
+                          pass
+                  elif t.endswith('[]'):
+                      # Dynamic array: load pointer and read length header
+                      self.output.append(f"    mov rax, [rbp - {offset}]")
+                      self.output.append("    mov rax, [rax - 8]")
+                      return 'int64'
+             
+             # Fallback: generate expression and check type
              t = self.gen_expression(expr.expr)
              
              if isinstance(t, str) and '[' in t and not t.endswith('[]'):
@@ -1397,6 +1530,127 @@ class CodeGen:
              # Header-based array (dynamic/pointer)
              self.output.append("    mov rax, [rax - 8]")
              return 'int64'
+
+        elif isinstance(expr, GetTypeExpr):
+             if isinstance(expr.expr, ArgsAccessExpr):
+                 # Runtime type tag lookup for variadic arguments
+                 self.gen_expression(expr.expr.index, expected_type='int32')
+                 pname = expr.expr.name
+                 if f"__types_{pname}" in self.locals:
+                      off, _ = self.locals[f"__types_{pname}"]
+                      self.output.append(f"    mov rcx, [rbp - {off}]")
+                      self.output.append("    mov rax, [rcx + rax*8]")
+                      return "string"
+             
+             # Inferred type name was stored by analyzer for static cases
+             type_name = getattr(expr, 'inferred_type_name', 'unknown')
+             
+             if type_name not in self.string_literals:
+                 label = self.new_label("type_str")
+                 self.string_literals[type_name] = label
+             else:
+                 label = self.string_literals[type_name]
+             
+             self.output.append(f"    lea rax, [rip + {label}]")
+             return "string"
+
+        elif isinstance(expr, ArgsAccessExpr):
+             # Accessing the value of a variadic argument: myargs(index)
+             self.gen_expression(expr.index, expected_type='int32')
+             pname = expr.name
+             # Find which function we are in
+             v_info = self.variadic_info.get(self.current_function.name)
+             if v_info and v_info[0] == pname:
+                  start_idx = v_info[1]
+                  if self.is_windows:
+                      # Contiguous in shadow space + stack: [rbp + 16 + (start + idx)*8]
+                      self.output.append(f"    add rax, {start_idx}")
+                      self.output.append("    shl rax, 3") # rax * 8
+                      self.output.append("    lea rcx, [rbp + 16]")
+                      self.output.append("    add rax, rcx")
+                      self.output.append("    mov rax, [rax]")
+                      # If expected_type is float, move bits to xmm0
+                      if expected_type in ['float32', 'float64']:
+                          self.output.append("    movq xmm0, rax")
+                          return expected_type
+                      # If expected_type is array, return pointer type
+                      if expected_type and expected_type.endswith('[]'):
+                          return expected_type
+                      return "int64" # Treat as generic 64-bit value
+                  else:
+                      # Linux: args are spilled to [rbp - spill_base + offset]
+                      # Integer args: rdi, rsi, rdx, rcx, r8, r9 at offsets 0-40
+                      # Float args: xmm0-xmm7 at offsets 48-104
+                      # We need to check the type to know which spill area to read from
+                      spill_base_key = f"__linux_spill_base_{pname}"
+                      if spill_base_key in self.locals:
+                          spill_base, _ = self.locals[spill_base_key]
+                          
+                          # Check if this argument is a float by looking at the types array
+                          # Types array is at __types_{pname}
+                          types_key = f"__types_{pname}"
+                          if types_key in self.locals:
+                              types_off, _ = self.locals[types_key]
+                              # Save the index in r11
+                              self.output.append("    mov r11, rax")  # Save index
+                              # Load type string pointer: types[idx]
+                              self.output.append("    mov rax, r11")
+                              self.output.append("    shl rax, 3")  # idx * 8
+                              self.output.append(f"    add rax, [rbp - {types_off}]")  # rax = types + idx*8
+                              self.output.append("    mov rax, [rax]")  # rax = type string pointer
+                              
+                              # Check if type string is exactly "float32" or "float64"
+                              # First check if it starts with 'f' (for "float...")
+                              # Then check if byte 7 is null (not an array like "float32[]")
+                              # This distinguishes:
+                              # - "float32" (7 chars, starts with 'f', byte 7 is null) -> float
+                              # - "float64" (7 chars, starts with 'f', byte 7 is null) -> float
+                              # - "int32[]" (7 chars, starts with 'i', byte 7 is null) -> NOT float
+                              # - "float32[]" (9 chars, starts with 'f', byte 7 is '[') -> NOT float
+                              float_label = self.new_label("arg_float")
+                              end_label = self.new_label("arg_end")
+                              
+                              self.output.append("    cmp byte ptr [rax], 102")  # Check if first char is 'f' (ASCII 102)
+                              self.output.append(f"    jne {float_label}")  # Not a float if doesn't start with 'f', use int path (labeled as float for fall-through)
+                              self.output.append("    cmp byte ptr [rax + 7], 0")  # Check if 8th byte is null (not an array)
+                              self.output.append(f"    jne {float_label}")  # Not a scalar float if byte 7 is not null
+                              
+                              # Float path: read from XMM spill area (offsets 48-104)
+                              self.output.append("    mov rax, r11")  # Restore index
+                              self.output.append(f"    add rax, {start_idx}")
+                              self.output.append("    shl rax, 3")  # rax = (idx + start_idx) * 8
+                              # XMM spill area starts at spill_base - 48
+                              # So offset from spill_base is 48 + idx*8
+                              self.output.append("    add rax, 48")  # Adjust for XMM area
+                              self.output.append(f"    mov r11, {spill_base}")
+                              self.output.append("    sub r11, rax")
+                              self.output.append("    neg r11")
+                              self.output.append("    lea rax, [rbp + r11]")
+                              self.output.append("    mov rax, [rax]")
+                              self.output.append(f"    jmp {end_label}")
+                              
+                              # Integer path: read from GPR spill area (offsets 0-40)
+                              self.output.append(f"{float_label}:")
+                              self.output.append("    mov rax, r11")  # Restore index
+                              self.output.append(f"    add rax, {start_idx}")
+                              self.output.append("    shl rax, 3")  # rax = (idx + start_idx) * 8
+                              self.output.append(f"    mov r11, {spill_base}")
+                              self.output.append("    sub r11, rax")  # r11 = spill_base - offset
+                              self.output.append("    neg r11")  # r11 = offset - spill_base
+                              self.output.append("    lea rax, [rbp + r11]")
+                              self.output.append("    mov rax, [rax]")
+                              
+                              self.output.append(f"{end_label}:")
+                              
+                              # If expected_type is float, move bits to xmm0
+                              if expected_type in ['float32', 'float64']:
+                                  self.output.append("    movq xmm0, rax")
+                                  return expected_type
+                              # If expected_type is array, return pointer type
+                              if expected_type and expected_type.endswith('[]'):
+                                  return expected_type
+                              return "int64" # Treat as generic 64-bit value
+             return "unknown"
 
         elif isinstance(expr, NoValueExpr):
              # Initialize to 0
@@ -1619,6 +1873,7 @@ class CodeGen:
         # 1. Evaluate all arguments and store them in temporary locals
         # This prevents register clobbering during evaluation of subsequent arguments
         arg_temps = []
+        actual_arg_types = []
         original_offset = self.next_local_offset
         
         for i, (arg_type, arg_expr) in enumerate(expr.args):
@@ -1644,6 +1899,9 @@ class CodeGen:
              
              # Generate expression
              actual_type = self.gen_expression(arg_expr, expected_type=arg_type)
+             # For variadic type info, use the declared arg_type, not the actual evaluated type
+             # This ensures type tags match what the caller specified
+             actual_arg_types.append(arg_type)
              
              # Convert if needed (e.g. float32 -> float64 promotion or int conversions)
              if target_type == 'float64' and actual_type == 'float32':
@@ -1704,7 +1962,8 @@ class CodeGen:
                         pass # TODO: Stack args
 
             # For varargs, AL must contain number of vector registers used
-            self.output.append(f"    mov al, {float_arg_idx}")
+            # NOTE: We set this AFTER variadic info to avoid being overwritten
+            saved_float_arg_idx = float_arg_idx
             
         else:
             # Windows x64
@@ -1795,6 +2054,31 @@ class CodeGen:
                 else:
                     self.output.append(f"    mov rax, [rbp - {temp_offset}]")
                     self.output.append(f"    mov {arg_regs[i]}, rax")
+
+
+        # Pass variadic info if needed for internal functions
+        if expr.name in self.internal_functions and expr.name in self.variadic_info:
+            vname, vstart = self.variadic_info[expr.name]
+            varargs_types = actual_arg_types[vstart:]
+            count = len(varargs_types)
+            
+            if count > 0:
+                array_label = self.new_label("type_array")
+                self.output.append(f"    lea r10, [rip + {array_label}]")
+                self.pending_type_arrays[array_label] = varargs_types
+            else:
+                self.output.append("    xor r10, r10")
+            
+            # Set count - use R11 on Linux to avoid conflict with AL
+            # On Windows, use RAX as before
+            if self.is_linux:
+                self.output.append(f"    mov r11, {count}")
+            else:
+                self.output.append(f"    mov rax, {count}")
+        
+        # Set AL for Linux varargs (number of vector registers used)
+        if self.is_linux:
+            self.output.append(f"    mov al, {saved_float_arg_idx}")
 
         self.output.append(f"    call {expr.name}")
         

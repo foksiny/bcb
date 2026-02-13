@@ -1,0 +1,83 @@
+<outtype: win64>
+// EXPECT: int32\n-----------\ntesting int32\n-----------\n10\n-----------\ntesting string\n-----------\nhello\n-----------\ntesting float64\n-----------\n10.500000\n-----------\ntesting int32[]\n-----------\n10\n20\n30\n-----------\ntesting string[]\n-----------\nhello\nworld\n-----------\ntesting float64[]\n-----------\n10.500000\n20.500000\n30.500000\n-----------\ntesting void\n-----------\nCan't print void\n-----------\ntesting no args\n-----------\nNo arguments\n
+
+data {
+    string fmt : "%s\n"
+    string fmt_i : "%d\n"
+    string fmt_f : "%f\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+define strcmp(a: string, b: string) -> int32;
+
+export main() -> int32 {
+    int32 a = 10;
+    string type = gettype(a);
+    call printf(string fmt, string type);
+
+    call printf(string "-----------\ntesting int32\n-----------\n");
+    call print(int32 10);
+    call printf(string "-----------\ntesting string\n-----------\n");
+    call print(string "hello");
+    call printf(string "-----------\ntesting float64\n-----------\n");
+    call print(float64 10.5);
+    call printf(string "-----------\ntesting int32[]\n-----------\n");
+    call print(int32[] { 10, 20, 30 });
+    call printf(string "-----------\ntesting string[]\n-----------\n");
+    call print(string[] { "hello", "world" });
+    call printf(string "-----------\ntesting float64[]\n-----------\n");
+    call print(float64[] { 10.5, 20.5, 30.5 });
+    call printf(string "-----------\ntesting void\n-----------\n");
+    call print(void 0);
+    call printf(string "-----------\ntesting no args\n-----------\n");
+    call print();
+
+    return int32 0;
+}
+
+print(myargs: ...args) -> void {
+    // if the function is called with no arguments, print "No arguments"
+    $if int32 myargs.amount == int32 0
+        call printf(string fmt, string "No arguments");
+        return void;
+    $endif
+    int32 i = 0; // for loops to print lists
+    int32 y = 0; // for the loop to print all args
+$while int32 y < int32 myargs.amount
+    string type = gettype(myargs(y));
+    $if int32 call strcmp(string type, string "int32") == int32 0
+        call printf(string fmt_i, int32 myargs(y)); // btw, 0 means the first argument of the function.
+    $elseif int32 call strcmp(string type, string "string") == int32 0
+        call printf(string fmt, string myargs(y));
+    $elseif int32 call strcmp(string type, string "float64") == int32 0
+        call printf(string fmt_f, float64 myargs(y));
+    $elseif int32 call strcmp(string type, string "int32[]") == int32 0
+        int32[] arr_i = int32[](myargs(y));
+        md int32 i = 0;
+        $while int32 i < int32 length(arr_i)
+            call printf(string fmt_i, int32 arr_i[i]);
+            md int32 i = i + 1;
+        $endwhile
+    $elseif int32 call strcmp(string type, string "string[]") == int32 0
+        string[] arr_s = string[](myargs(y));
+        md int32 i = 0;
+        $while int32 i < int32 length(arr_s)
+            call printf(string fmt, string arr_s[i]);
+            md int32 i = i + 1;
+        $endwhile
+    $elseif int32 call strcmp(string type, string "float64[]") == int32 0
+        float64[] arr_f = float64[](myargs(y));
+        md int32 i = 0;
+        $while int32 i < int32 length(arr_f)
+            call printf(string fmt_f, float64 arr_f[i]);
+            md int32 i = i + 1;
+        $endwhile
+    $elseif int32 call strcmp(string type, string "void") == int32 0
+        call printf(string fmt, string "Can't print void");
+    $else
+        call printf(string fmt, string "Unknown type");
+    $endif
+    md int32 y = y + 1;
+$endwhile
+    return void;
+}

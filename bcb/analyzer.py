@@ -1,5 +1,5 @@
 from .parser import *
-from .parser import NoValueExpr, LengthExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt
+from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt
 from .errors import DiagnosticLevel
 
 class SemanticAnalyzer:
@@ -467,6 +467,12 @@ class SemanticAnalyzer:
              self.analyze_expr(expr.expr)
              return "int32"
 
+        elif isinstance(expr, GetTypeExpr):
+             t = self.analyze_expr(expr.expr)
+             # Store the inferred type name in the node for codegen/optimization
+             expr.inferred_type_name = t
+             return "string"
+
         elif isinstance(expr, ArrayAccessExpr):
              arr_type = self.analyze_expr(expr.arr)
              if expr.index is not None:
@@ -496,6 +502,13 @@ class SemanticAnalyzer:
              t = self.analyze_expr(expr.values[0])
              return t + "[]"
 
+        elif isinstance(expr, ArgsAccessExpr):
+             self.analyze_expr(expr.index)
+             var_type = self.lookup(expr.name)
+             if not var_type or not "..." in var_type:
+                  self.error(f"'{expr.name}' is not a variadic parameter and cannot be accessed with (index)", expr)
+             return "dynamic_arg"
+
         elif isinstance(expr, StructLiteralExpr):
             # For now, we don't infer struct type well from AST unless passed down, 
             # but usually it's assigned to a variable of known type.
@@ -503,6 +516,12 @@ class SemanticAnalyzer:
             return "struct_literal"
             
         elif isinstance(expr, FieldAccessExpr):
+            # Check for .amount on variadic params
+            if expr.field_name == "amount" and isinstance(expr.obj, VarRefExpr):
+                var_type = self.lookup(expr.obj.name)
+                if var_type and var_type.startswith("..."):
+                    return "int32"
+
             # Check if this is an Enum access (Type.MEMBER)
             # Logic: If expr.obj is a VarRef, check if it shadows a variable. 
             # If not a variable, check if it's an Enum.

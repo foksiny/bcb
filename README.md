@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.3**
+**Version 1.0.4**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -24,10 +24,15 @@
 11. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
 12. [Advanced Math & Logic](#advanced-math--logic)
 13. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
-14. [Pointer Dereferencing Syntax](#pointer-dereferencing-syntax)
-15. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
-16. [Macros (Metaprogramming)](#macros-metaprogramming)
-17. [Building and Testing](#building-and-testing)
+14. [Runtime Type Information & Variadic Arguments](#runtime-type-information--variadic-arguments)
+    - [The gettype() Function](#the-gettype-function)
+    - [Variadic Functions with ...args](#variadic-functions-with-args)
+    - [myargs.amount - Argument Count](#myargsamount---argument-count)
+    - [myargs(index) - Accessing Arguments by Index](#myargsindex---accessing-arguments-by-index)
+15. [Pointer Dereferencing Syntax](#pointer-dereferencing-syntax)
+16. [Compiler Internals & Win64 ABI](#compiler-internals--win64-abi)
+17. [Macros (Metaprogramming)](#macros-metaprogramming)
+18. [Building and Testing](#building-and-testing)
 
 ---
 
@@ -577,7 +582,174 @@ export main(void) -> int32 {
 
 ---
 
-## 11. Pointer Dereferencing Syntax
+## 11. Runtime Type Information & Variadic Arguments
+
+BCB provides powerful runtime type introspection and variadic argument handling capabilities.
+
+### The `gettype()` Function
+
+`gettype()` is a built-in function that returns the type of a variable or expression as a string at runtime. This enables type-safe generic programming.
+
+**Syntax:**
+```bcb
+string type_name = gettype(expression);
+```
+
+**Return Values:**
+| Expression Type | Returns |
+|:----------------|:--------|
+| `int32` variable | `"int32"` |
+| `int64` variable | `"int64"` |
+| `string` variable | `"string"` |
+| `float64` variable | `"float64"` |
+| `float32` variable | `"float32"` |
+| `int32[]` array | `"int32[]"` |
+| `string[]` array | `"string[]"` |
+| `float64[]` array | `"float64[]"` |
+| `void` | `"void"` |
+
+**Example:**
+```bcb
+export main() -> int32 {
+    int32 a = 10;
+    string type = gettype(a);       // type = "int32"
+    
+    float64 pi = 3.14159;
+    string float_type = gettype(pi); // float_type = "float64"
+    
+    int32[] numbers = { 1, 2, 3 };
+    string arr_type = gettype(numbers); // arr_type = "int32[]"
+    
+    return int32 0;
+}
+```
+
+### Variadic Functions with `...args`
+
+BCB supports variadic functions that can accept a variable number of arguments. Use `...args` as the parameter name to capture all additional arguments.
+
+**Declaration:**
+```bcb
+print(myargs: ...args) -> void {
+    // Function body can access all passed arguments
+}
+```
+
+### `myargs.amount` - Argument Count
+
+The `.amount` property returns the number of arguments passed to the variadic parameter.
+
+**Syntax:**
+```bcb
+int32 count = myargs.amount;
+```
+
+**Example:**
+```bcb
+print_all(myargs: ...args) -> void {
+    $if int32 myargs.amount == int32 0
+        call printf(string "No arguments provided\n");
+        return void;
+    $endif
+    
+    call printf(string "Received %d arguments\n", int32 myargs.amount);
+    return void;
+}
+```
+
+### `myargs(index)` - Accessing Arguments by Index
+
+Individual variadic arguments can be accessed using the `myargs(index)` syntax, where index is 0-based.
+
+**Syntax:**
+```bcb
+// Access the first argument (index 0)
+type myargs(0)
+
+// Access the second argument (index 1)
+type myargs(1)
+```
+
+**Important:** You must cast `myargs(index)` to the expected type when using it:
+```bcb
+int32 value = int32 myargs(0);      // Cast to int32
+string text = string myargs(1);     // Cast to string
+float64 num = float64 myargs(2);    // Cast to float64
+```
+
+### Complete Example: Type-Safe Generic Print Function
+
+This example demonstrates combining `gettype()`, `myargs.amount`, and `myargs(index)` to create a generic print function:
+
+```bcb
+data {
+    string fmt : "%s\n"
+    string fmt_i : "%d\n"
+    string fmt_f : "%f\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+define strcmp(a: string, b: string) -> int32;
+
+export main() -> int32 {
+    call print(int32 10);
+    call print(string "hello");
+    call print(float64 10.5);
+    call print(int32[] { 10, 20, 30 });
+    call print();  // No arguments
+    return int32 0;
+}
+
+print(myargs: ...args) -> void {
+    // Handle no arguments case
+    $if int32 myargs.amount == int32 0
+        call printf(string fmt, string "No arguments");
+        return void;
+    $endif
+    
+    int32 i = 0;
+    // Iterate through all arguments
+    $while int32 i < int32 myargs.amount
+        string type = gettype(myargs(i));
+        
+        $if int32 call strcmp(string type, string "int32") == int32 0
+            call printf(string fmt_i, int32 myargs(i));
+        $elseif int32 call strcmp(string type, string "string") == int32 0
+            call printf(string fmt, string myargs(i));
+        $elseif int32 call strcmp(string type, string "float64") == int32 0
+            call printf(string fmt_f, float64 myargs(i));
+        $elseif int32 call strcmp(string type, string "int32[]") == int32 0
+            // Cast to array type for iteration
+            int32[] arr = int32[](myargs(i));
+            int32 j = 0;
+            $while int32 j < int32 length(arr)
+                call printf(string fmt_i, int32 arr[j]);
+                md int32 j = j + 1;
+            $endwhile
+        $endif
+        
+        md int32 i = i + 1;
+    $endwhile
+    
+    return void;
+}
+```
+
+### Type Casting Variadic Arguments
+
+When retrieving arguments from `myargs(index)`, cast to the appropriate type:
+
+| Target Type | Cast Syntax |
+|:------------|:------------|
+| Scalar types | `int32 myargs(0)`, `float64 myargs(0)` |
+| String | `string myargs(0)` |
+| Array types | `int32[](myargs(0))`, `string[](myargs(0))` |
+
+**Note:** Array types require parentheses around the cast: `type[](myargs(index))`.
+
+---
+
+## 15. Pointer Dereferencing Syntax
 When passing pointers to functions (like `printf`), explicit syntax controls whether you pass the **address** or the **value**.
 
 - **Passing the Address (Pointer)**:
@@ -595,7 +767,7 @@ When passing pointers to functions (like `printf`), explicit syntax controls whe
 
 ---
 
-## 12. Compiler Internals & Win64 ABI
+## 16. Compiler Internals & Win64 ABI
 To write truly advanced BCB, you must understand how it talks to the CPU.
 
 ### The Calling Convention (Microsoft x64)
@@ -614,7 +786,7 @@ When a function starts, BCB:
 
 ---
 
-## 16. Macros (Metaprogramming)
+## 17. Macros (Metaprogramming)
 Macros in BCB allow you to define reusable code snippets that are expanded at compile time (text substitution). This is powerful for reducing boilerplate.
 
 **Definition:**
@@ -650,7 +822,7 @@ export main(void) -> int32 {
 
 ---
 
-## 17. Building and Testing
+## 18. Building and Testing
 ```bash
 # Install the bcb command
 pip install -e .

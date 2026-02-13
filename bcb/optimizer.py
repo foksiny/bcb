@@ -399,6 +399,21 @@ class ASTOptimizer:
         elif isinstance(expr, ArrayLiteralExpr):
             expr.values = [self._optimize_expr(v) for v in expr.values]
             return expr
+
+        elif isinstance(expr, LengthExpr):
+            expr.expr = self._optimize_expr(expr.expr)
+            # If we could determine array length at compile time...
+            # For now just return it
+            return expr
+
+        elif isinstance(expr, GetTypeExpr):
+            expr.expr = self._optimize_expr(expr.expr)
+            type_name = getattr(expr, 'inferred_type_name', None)
+            if type_name and type_name != "dynamic_arg":
+                self.stats.constants_folded += 1
+                self.changed = True
+                return LiteralExpr(type_name, expr.line, expr.column)
+            return expr
             
         return expr
     
@@ -740,6 +755,23 @@ class ASTOptimizer:
         # Optimize arguments
         new_args = [(at, self._optimize_expr(ae)) for at, ae in expr.args]
         expr.args = new_args
+
+        # Compile-time evaluation of builtin functions
+        if expr.name == "strcmp" and len(expr.args) == 2:
+            arg1 = expr.args[0][1]
+            arg2 = expr.args[1][1]
+            # Handle both LiteralExpr and TypeCastExpr wrapping it
+            if isinstance(arg1, TypeCastExpr): arg1 = arg1.expr
+            if isinstance(arg2, TypeCastExpr): arg2 = arg2.expr
+
+            if isinstance(arg1, LiteralExpr) and isinstance(arg2, LiteralExpr):
+                val1 = arg1.value
+                val2 = arg2.value
+                if isinstance(val1, str) and isinstance(val2, str):
+                    result = 0 if val1 == val2 else (1 if val1 > val2 else -1)
+                    self.stats.constants_folded += 1
+                    self.changed = True
+                    return LiteralExpr(result, expr.line, expr.column)
         
         # Try inlining
         if self.optimization_level >= 2 and expr.name in self.functions:
