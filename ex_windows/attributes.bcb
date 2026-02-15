@@ -1,0 +1,50 @@
+<outtype: win64>
+// EXPECT: c: 30, d: 20, e: 25\nx: 5\nnothing here\n
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main() -> int32 {
+    int32 a = 20;
+    int32 b = 10;
+    int32 c = call math.add(int32 a, int32 b);
+    int32 d = call math.sub(int32 c, int32 b);
+    md int32 math.x = 5;
+    int32 e = call math.add_and_sub(int32 a, int32 b);
+    call printf(string "c: %d, d: %d, e: %d\n", int32 c, int32 d, int32 e);
+
+    call printf(string "x: %d\n", int32 math.x);
+    call math();
+
+    return int32 0;
+}
+
+// # are attributes, and attibutes can be used to suppress warnings or to make functions or public variables be for example the son of another function
+#NoWarning("unused function")
+addsub(a: int32, b: int32) -> int32 {
+    #NoWarning("unused variable")
+    int32 out = a + b;
+    return int32 a + b - b;
+}
+
+math(void) -> void {
+    call printf(string "nothing here\n");
+    return void;
+}
+
+#SonOf(math)
+add(a: int32, b: int32) -> int32 {
+    return int32 a + b;
+}
+
+#SonOf(math)
+sub(a: int32, b: int32) -> int32 {
+    return int32 a - b;
+}
+
+#SonOf(math)
+add_and_sub(a: int32, b: int32) -> int32 {
+    return int32 a + b - math.x;
+}
+
+#SonOf(math)
+pub int32 x = 10;

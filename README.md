@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.5**
+**Version 1.0.6**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -77,6 +77,7 @@ OPTIONS:
     -O1             Basic optimizations (constant folding)
     -O2             Standard optimizations (default)
     -O3             Aggressive optimizations (maximum performance)
+    --analyze, -a   Only run semantic analysis (check for errors/warnings)
     --stats         Show optimization statistics
     --help, -h      Show help message
     --version, -v   Show version information
@@ -95,6 +96,9 @@ bcb main.bcb -O3 --stats
 
 # No optimization (fastest compile time)
 bcb main.bcb -O0
+
+# Only check for errors and warnings (no compilation)
+bcb main.bcb --analyze
 ```
 
 ---
@@ -316,6 +320,107 @@ A **PRE** is a special warning category unique to BCB. It detects code that is s
 - **Implicit Truncation**: Converting a large integer (`int64`) to a smaller one (`int32`) without an explicit cast.
   - *Example*: `int32 x = my_int64_var;` -> **PRE**: "Implicit conversion from 'int64' to 'int32' may truncate value."
 - **Supression**: The analyzer is smart! If you assign a safe literal like `int32 x = 1;` (where `1` fits in 32 bits), the PRE is automatically suppressed.
+
+### Attributes System
+BCB supports **attributes** that can be applied to functions, variables, and statements to modify compiler behavior. Attributes are specified using the `#` prefix.
+
+#### Available Attributes
+
+| Attribute | Description | Example |
+| :--- | :--- | :--- |
+| `#NoWarning("type")` | Suppresses specific warning types | `#NoWarning("unused variable")` |
+| `#SonOf(parent)` | Creates hierarchical function/variable relationships | `#SonOf(math)` |
+
+#### Multiple Attributes
+You can apply multiple attributes to the same declaration using the `::` separator:
+
+```bcb
+// Apply multiple attributes to a function
+#NoWarning("unused function")::#SonOf(math)
+add(a: int32, b: int32) -> int32 {
+    return int32 a + b;
+}
+
+// Apply multiple attributes to a global variable
+#NoWarning("unused variable")::#SonOf(config)
+pub int32 debug_level = 1;
+```
+
+The `::` separator allows you to chain attributes on a single line, making the code more compact and readable.
+
+#### Suppressing Warnings
+The `#NoWarning` attribute allows you to suppress specific warning types:
+
+```bcb
+// Suppress unused function warning
+#NoWarning("unused function")
+helper() -> int32 {
+    return int32 42;
+}
+
+// Suppress unused variable warning
+#NoWarning("unused variable")
+int32 debug_flag = 1;
+
+// Suppress unused parameter warning
+process(data: int32, _unused: int32) -> void {
+    // _unused parameter won't trigger warning
+    return void;
+}
+```
+
+**Supported Warning Types:**
+- `"unused function"` - Suppresses warnings about functions that are never called
+- `"unused variable"` - Suppresses warnings about variables that are never used
+- `"unused parameter"` - Suppresses warnings about function parameters that are never used
+
+**Alternative Suppression:**
+Variables and parameters starting with underscore (`_`) are automatically excluded from unused warnings:
+```bcb
+process(data: int32, _scratch: int32) -> void {
+    int32 _temp = 0;  // No warning
+    return void;
+}
+```
+
+#### SonOf Attribute (Hierarchical Organization)
+The `#SonOf` attribute creates parent-child relationships between functions and variables, enabling namespace-like organization:
+
+```bcb
+// Parent function
+math(void) -> void {
+    call printf(string "Math module loaded\n");
+    return void;
+}
+
+// Child functions (must be called as math.add, math.sub)
+#SonOf(math)
+add(a: int32, b: int32) -> int32 {
+    return int32 a + b;
+}
+
+#SonOf(math)
+sub(a: int32, b: int32) -> int32 {
+    return int32 a - b;
+}
+
+// Child variable (accessed as math.x)
+#SonOf(math)
+pub int32 x = 10;
+
+export main() -> int32 {
+    // Call child functions with parent prefix
+    int32 result = call math.add(int32 5, int32 3);
+    
+    // Access child variable
+    md int32 math.x = 20;
+    
+    // Call parent function
+    call math();
+    
+    return int32 0;
+}
+```
 
 ---
 

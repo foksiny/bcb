@@ -5,7 +5,7 @@ from bcb.lexer import tokenize
 from bcb.parser import Parser
 from bcb.codegen import CodeGen
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 VERSION_STRING = f"BCB Compiler {VERSION} Final Release"
 
 HELP_TEXT = f"""
@@ -21,6 +21,7 @@ OPTIONS:
     -O1             Basic optimizations (constant folding)
     -O2             Standard optimizations (default)
     -O3             Aggressive optimizations (maximum performance)
+    --analyze, -a   Only run semantic analysis (check for errors/warnings)
     --stats         Show optimization statistics
     --help, -h      Show this help message
     --version, -v   Show version information
@@ -30,6 +31,7 @@ EXAMPLES:
     bcb main.bcb -o main.s          Specify output file
     bcb main.bcb -O3 --stats        Maximum optimization with stats
     bcb main.bcb -O0                No optimization (fastest compile)
+    bcb main.bcb --analyze          Only check for errors and warnings
 
 OPTIMIZATION LEVELS:
     O0  No optimization - fastest compilation, largest/slowest output
@@ -72,6 +74,7 @@ def main():
     output_file = "output.s"
     optimization_level = 2  # Default to O2
     show_stats = "--stats" in sys.argv
+    analyze_only = "--analyze" in sys.argv or "-a" in sys.argv
     
     if "-o" in sys.argv:
         idx = sys.argv.index("-o")
@@ -106,15 +109,30 @@ def main():
         from bcb.optimizer import ASTOptimizer, optimize_assembly
         
         error_manager = ErrorManager(code, input_file)
+        
+        # Register imported files for error display
+        for imported_path in parser.imported_files:
+            if imported_path != abs_input and os.path.exists(imported_path):
+                with open(imported_path, 'r') as f:
+                    error_manager.add_source_file(imported_path, f.read())
+        
         analyzer = SemanticAnalyzer(ast, error_manager)
         analyzer.analyze()
         
         if error_manager.diagnostics:
              error_manager.print_diagnostics()
-             
+              
         if error_manager.has_error:
              print("Compilation failed due to errors.")
              sys.exit(1)
+        
+        # If --analyze mode, stop here
+        if analyze_only:
+            total_time = time.perf_counter() - start_time
+            if not error_manager.diagnostics:
+                print(f"Analysis complete: No issues found in {input_file}")
+            print(f"Analysis time: {total_time*1000:.2f}ms")
+            sys.exit(0)
 
         # Optimization Phase
         opt_start = time.perf_counter()

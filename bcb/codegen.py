@@ -716,11 +716,50 @@ class CodeGen:
                         self.output.append(f"    mov [rbp - {self.next_local_offset}], rax")
 
         elif isinstance(stmt, VarAssignStmt):
+            # Handle dotted variable names (e.g., math.x for SonOf variables or p.x for struct fields)
+            if '.' in stmt.name:
+                parts = stmt.name.split('.', 1)
+                parent_name = parts[0]
+                child_name = parts[1]
+                
+                # Check if parent is a local struct variable (struct field assignment)
+                if parent_name in self.locals:
+                    var_offset, struct_type = self.locals[parent_name]
+                    
+                    if struct_type in self.structs:
+                        # This is a struct field assignment
+                        field_offsets = self.struct_field_offsets.get(struct_type, {})
+                        field_offset = field_offsets.get(child_name, 0)
+                        field_type = self.get_field_type(struct_type, child_name)
+                        
+                        # Generate the expression value
+                        self.gen_expression(stmt.expr, expected_type=field_type)
+                        
+                        # Store the value in the field
+                        if field_type == 'int32':
+                            self.output.append(f"    mov dword ptr [rbp - {var_offset - field_offset}], eax")
+                        elif field_type == 'int64' or field_type == 'string' or field_type in self.enums or field_type.endswith('*'):
+                            self.output.append(f"    mov qword ptr [rbp - {var_offset - field_offset}], rax")
+                        elif field_type == 'float32':
+                            self.output.append(f"    movss [rbp - {var_offset - field_offset}], xmm0")
+                        elif field_type == 'float64':
+                            self.output.append(f"    movsd [rbp - {var_offset - field_offset}], xmm0")
+                        elif field_type == 'char' or field_type == 'int8':
+                             self.output.append(f"    mov byte ptr [rbp - {var_offset - field_offset}], al")
+                        elif field_type == 'int16':
+                             self.output.append(f"    mov word ptr [rbp - {var_offset - field_offset}], ax")
+                        return
+                
+                # Otherwise, treat as SonOf variable (use the child name)
+                var_name = child_name
+            else:
+                var_name = stmt.name
+            
             # Pointer mutation via: md int32* ptr = value;  =>  *ptr = value
             if isinstance(stmt.type_name, str) and stmt.type_name.endswith('*'):
                 base_type = stmt.type_name[:-1]
-                if stmt.name in self.locals:
-                    ptr_offset, ptr_type = self.locals[stmt.name]
+                if var_name in self.locals:
+                    ptr_offset, ptr_type = self.locals[var_name]
                     # Load pointer value from local variable (use caller-saved register)
                     self.output.append(f"    mov rdx, [rbp - {ptr_offset}]")
                     actual_type = self.gen_expression(stmt.expr, expected_type=base_type if base_type else None)
@@ -755,8 +794,8 @@ class CodeGen:
             expected_type = None  # Default logic as requested
             actual_type = self.gen_expression(stmt.expr, expected_type=None)
 
-            if stmt.name in self.locals:
-                offset, t = self.locals[stmt.name]
+            if var_name in self.locals:
+                offset, t = self.locals[var_name]
                 if t in ['float32', 'float64']:
                     self.gen_conversion(actual_type, t)
                     if t == 'float32':
@@ -766,8 +805,8 @@ class CodeGen:
                 else:
                     self.gen_conversion(actual_type, t)
                     self.output.append(f"    mov [rbp - {offset}], rax")
-            elif stmt.name in self.globals:
-                info = self.globals[stmt.name]
+            elif var_name in self.globals:
+                info = self.globals[var_name]
                 label = info['label']
                 t = info['type']
                 
@@ -1188,8 +1227,13 @@ class CodeGen:
 
         # 4. Handle VarRef
         elif isinstance(expr, VarRefExpr):
-            if expr.name in self.locals:
-                offset, t = self.locals[expr.name]
+            # Handle dotted variable names (e.g., math.x for SonOf variables)
+            var_name = expr.name
+            if '.' in var_name:
+                var_name = var_name.split('.', 1)[1]
+            
+            if var_name in self.locals:
+                offset, t = self.locals[var_name]
                 native_type = t
                 
                 # Load variable
@@ -1219,12 +1263,12 @@ class CodeGen:
                     self.gen_conversion(t, expected_type)
                     return expected_type
                 return t
-            elif expr.name in self.data_labels:
-                label = self.data_labels[expr.name]
+            elif var_name in self.data_labels:
+                label = self.data_labels[var_name]
                 self.output.append(f"    lea rax, [rip + {label}]")
                 return 'string'
-            elif expr.name in self.globals:
-                info = self.globals[expr.name]
+            elif var_name in self.globals:
+                info = self.globals[var_name]
                 label = info['label']
                 t = info['type']
                 
@@ -1264,6 +1308,38 @@ class CodeGen:
                     off, _ = self.locals[f"__amount_{pname}"]
                     self.output.append(f"    mov rax, [rbp - {off}]")
                     return "int32"
+            
+            # Check if this is a SonOf variable access (parent.child)
+            if isinstance(expr.obj, VarRefExpr):
+                parent_name = expr.obj.name
+                child_name = expr.field_name
+                
+                # Check if the child is a global variable (SonOf)
+                if child_name in self.globals:
+                    info = self.globals[child_name]
+                    label = info['label']
+                    t = info['type']
+                    
+                    if t == 'float32':
+                        self.output.append(f"    movss xmm0, [rip + {label}]")
+                    elif t == 'float64':
+                        self.output.append(f"    movsd xmm0, [rip + {label}]")
+                    else:
+                        size = self.get_type_size(t)
+                        if size == 1:
+                            self.output.append(f"    movsx rax, byte ptr [rip + {label}]")
+                        elif size == 2:
+                            self.output.append(f"    movsx rax, word ptr [rip + {label}]")
+                        elif size == 4:
+                            self.output.append(f"    movsxd rax, dword ptr [rip + {label}]")
+                        else:
+                            self.output.append(f"    mov rax, [rip + {label}]")
+                    
+                    if expected_type is not None and expected_type != t:
+                        self.gen_conversion(t, expected_type)
+                        return expected_type
+                    return t
+            
             # 1. Get base address and struct type
             if isinstance(expr.obj, VarRefExpr) and expr.obj.name in self.locals:
                 var_offset, struct_type = self.locals[expr.obj.name]
@@ -1872,7 +1948,12 @@ class CodeGen:
                 self.output.append("    cvtsd2ss xmm0, xmm0")
 
     def gen_call(self, expr):
-        func_params = self.function_params.get(expr.name)
+        # Handle dotted function names (e.g., math.add -> add)
+        func_name = expr.name
+        if '.' in func_name:
+            func_name = func_name.split('.', 1)[1]
+        
+        func_params = self.function_params.get(func_name)
         
         # 1. Evaluate all arguments and store them in temporary locals
         # This prevents register clobbering during evaluation of subsequent arguments
@@ -2061,8 +2142,13 @@ class CodeGen:
 
 
         # Pass variadic info if needed for internal functions
-        if expr.name in self.internal_functions and expr.name in self.variadic_info:
-            vname, vstart = self.variadic_info[expr.name]
+        # Handle dotted function names (e.g., std.print -> print)
+        check_func_name = expr.name
+        if '.' in check_func_name:
+            check_func_name = check_func_name.split('.', 1)[1]
+        
+        if check_func_name in self.internal_functions and check_func_name in self.variadic_info:
+            vname, vstart = self.variadic_info[check_func_name]
             varargs_types = actual_arg_types[vstart:]
             count = len(varargs_types)
             
@@ -2084,7 +2170,12 @@ class CodeGen:
         if self.is_linux:
             self.output.append(f"    mov al, {saved_float_arg_idx}")
 
-        self.output.append(f"    call {expr.name}")
+        # Handle dotted function names (e.g., math.add -> add)
+        func_name = expr.name
+        if '.' in func_name:
+            func_name = func_name.split('.', 1)[1]
+        
+        self.output.append(f"    call {func_name}")
         
         # Cleanup stack
         if self.is_windows:

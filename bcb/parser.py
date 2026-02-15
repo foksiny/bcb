@@ -2,240 +2,257 @@ import os
 from .lexer import tokenize, TokenType
 
 class ASTNode:
-    def __init__(self, line=0, column=0):
+    def __init__(self, line=0, column=0, source_file=None):
         self.line = line
         self.column = column
+        self.source_file = source_file  # Track which file this node originated from
+
+class Attribute(ASTNode):
+    def __init__(self, name, args, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+        self.name = name  # Attribute name (e.g., "NoWarning", "SonOf")
+        self.args = args  # List of arguments (strings, identifiers, numbers)
 
 class Program(ASTNode):
-    def __init__(self, outtype, data_block, declarations, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, outtype, data_block, declarations, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.outtype = outtype
         self.data_block = data_block
         self.declarations = declarations
 
 class StructDef(ASTNode):
-    def __init__(self, name, fields, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, fields, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
         self.fields = fields
 
 class EnumDef(ASTNode):
-    def __init__(self, name, values, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, values, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
         self.values = values
 
 class DataBlock(ASTNode):
-    def __init__(self, entries, structs=None, enums=None, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, entries, structs=None, enums=None, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.entries = entries
         self.structs = structs or []
         self.enums = enums or []
 
 class FunctionDecl(ASTNode):
-    def __init__(self, name, params, return_type, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, params, return_type, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
         self.params = params
         self.return_type = return_type
 
 class FunctionDef(ASTNode):
-    def __init__(self, name, params, return_type, body, is_exported, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, params, return_type, body, is_exported, attributes=None, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
         self.params = params
         self.return_type = return_type
         self.body = body
         self.is_exported = is_exported
+        self.attributes = attributes or []  # List of Attribute nodes
 
 class GlobalVarDecl(ASTNode):
-    def __init__(self, type_name, name, expr, is_array=False, array_size=None, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, name, expr, is_array=False, array_size=None, attributes=None, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.name = name
         self.expr = expr
         self.is_array = is_array
         self.array_size = array_size
+        self.attributes = attributes or []  # List of Attribute nodes
 
 class CallExpr(ASTNode):
-    def __init__(self, name, args, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, args, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
         self.args = args
 
 class ReturnStmt(ASTNode):
-    def __init__(self, return_type, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, return_type, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.return_type = return_type
         self.expr = expr
 
 class VarDeclStmt(ASTNode):
-    def __init__(self, type_name, name, expr, is_array=False, array_size=None, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, name, expr, is_array=False, array_size=None, attributes=None, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.name = name
         self.expr = expr
         self.is_array = is_array
         self.array_size = array_size
+        self.attributes = attributes or []  # List of Attribute nodes
 
 class BinaryExpr(ASTNode):
-    def __init__(self, left, op, right, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, left, op, right, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.left = left
         self.op = op
         self.right = right
 
 class UnaryExpr(ASTNode):
-    def __init__(self, op, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, op, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.op = op
         self.expr = expr
 
 class LiteralExpr(ASTNode):
-    def __init__(self, value, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, value, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.value = value
 
 class VarRefExpr(ASTNode):
-    def __init__(self, name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
 
 class TypeCastExpr(ASTNode):
-    def __init__(self, target_type, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, target_type, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.target_type = target_type
         self.expr = expr
 
 class StructLiteralExpr(ASTNode):
-    def __init__(self, struct_type, field_values, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, struct_type, field_values, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.struct_type = struct_type
         self.field_values = field_values
 
 class FieldAccessExpr(ASTNode):
-    def __init__(self, obj, field_name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, obj, field_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.obj = obj
         self.field_name = field_name
 
 class EnumValueExpr(ASTNode):
-    def __init__(self, enum_name, value_name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, enum_name, value_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.enum_name = enum_name
         self.value_name = value_name
 
 class IfStmt(ASTNode):
-    def __init__(self, conditions_and_bodies, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, conditions_and_bodies, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.conditions_and_bodies = conditions_and_bodies
 
 class WhileStmt(ASTNode):
-    def __init__(self, condition, body, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, condition, body, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.condition = condition
         self.body = body
 
 class VarAssignStmt(ASTNode):
-    def __init__(self, type_name, name, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, name, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.name = name
         self.expr = expr
 
 class FieldAssignStmt(ASTNode):
-    def __init__(self, type_name, var_name, field_name, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, var_name, field_name, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.var_name = var_name
         self.field_name = field_name
         self.expr = expr
 
 class ArrayAccessExpr(ASTNode):
-    def __init__(self, arr, index, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, arr, index, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.arr = arr
         self.index = index
 
 class ArrayLiteralExpr(ASTNode):
-    def __init__(self, values, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, values, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.values = values
 
 class ArrayAssignStmt(ASTNode):
-    def __init__(self, type_name, arr_name, index, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, arr_name, index, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.arr_name = arr_name
         self.index = index
         self.expr = expr
 
 class LengthExpr(ASTNode):
-    def __init__(self, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.expr = expr
 
 class GetTypeExpr(ASTNode):
-    def __init__(self, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.expr = expr
 
 class ArgsAccessExpr(ASTNode):
-    def __init__(self, name, index, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, index, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
         self.index = index
 
 class LabelDef(ASTNode):
-    def __init__(self, name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.name = name
 
 class JmpStmt(ASTNode):
-    def __init__(self, target, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, target, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.target = target
 
 class IfnStmt(ASTNode):
-    def __init__(self, condition, target, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, condition, target, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.condition = condition
         self.target = target
 
 class CmpTStmt(ASTNode):
-    def __init__(self, condition, target, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, condition, target, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.condition = condition
         self.target = target
 
 class PushStmt(ASTNode):
-    def __init__(self, type_name, expr, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, expr, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.expr = expr
 
 class PopStmt(ASTNode):
-    def __init__(self, type_name, var_name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, var_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
         self.var_name = var_name
 
 class SwapStmt(ASTNode):
-    def __init__(self, type_name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
 
 class DupStmt(ASTNode):
-    def __init__(self, type_name, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, type_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
         self.type_name = type_name
 
 class NoValueExpr(ASTNode):
-    def __init__(self, line=0, column=0):
-        super().__init__(line, column)
+    def __init__(self, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+
+class Attribute(ASTNode):
+    """Represents an attribute like #NoWarning("unused function") or #SonOf(math)"""
+    def __init__(self, name, args, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+        self.name = name  # e.g., "NoWarning", "SonOf"
+        self.args = args  # list of (arg_type, arg_value) tuples
 
 class Parser:
-    def __init__(self, tokens, base_dir=".", imported_files=None):
+    def __init__(self, tokens, base_dir=".", imported_files=None, source_file=None):
         self.tokens = tokens
         self.pos = 0
         self.enum_names = set()  # Track known enum names
@@ -243,6 +260,7 @@ class Parser:
         self.macros = {} # Track known macros
         self.base_dir = base_dir
         self.imported_files = imported_files if imported_files is not None else set()
+        self.source_file = source_file  # Track the source file being parsed
 
     def parse_type(self):
         # Base type (keyword, identifier, etc.)
@@ -285,6 +303,47 @@ class Parser:
         self.pos += 1
         return token
 
+    def parse_attributes(self):
+        """Parse attributes like #NoWarning("unused function") or #SonOf(math)
+        
+        Multiple attributes can be specified using :: as separator:
+        #NoWarning("unused function")::#SonOf(myfunc)
+        """
+        attributes = []
+        while self.peek().type == TokenType.SYMBOL and self.peek().value == '#':
+            start_token = self.consume()  # #
+            attr_name = self.consume(TokenType.IDENTIFIER).value  # Attribute name
+            args = []
+            
+            # Check for arguments in parentheses
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
+                self.consume()  # (
+                while not (self.peek().type == TokenType.SYMBOL and self.peek().value == ')'):
+                    arg_token = self.peek()
+                    if arg_token.type == TokenType.STRING:
+                        args.append(('string', self.consume().value))
+                    elif arg_token.type == TokenType.NUMBER:
+                        args.append(('number', self.consume().value))
+                    elif arg_token.type == TokenType.IDENTIFIER:
+                        args.append(('identifier', self.consume().value))
+                    else:
+                        raise RuntimeError(f"Unexpected attribute argument type {arg_token.type} at line {arg_token.line}")
+                    
+                    # Optional comma
+                    if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
+                        self.consume()
+                self.consume(TokenType.SYMBOL, ')')  # )
+            
+            attributes.append(Attribute(attr_name, args, start_token.line, start_token.column, self.source_file))
+            
+            # Check for :: separator to continue parsing more attributes
+            if self.peek().type == TokenType.SYMBOL and self.peek().value == '::':
+                self.consume()  # ::
+                # Continue to next attribute (must be followed by #)
+                if not (self.peek().type == TokenType.SYMBOL and self.peek().value == '#'):
+                    raise RuntimeError(f"Expected attribute after '::' at line {self.peek().line}")
+        return attributes
+
     def parse(self):
         outtype = None
         data_block = None
@@ -302,6 +361,26 @@ class Parser:
                 else:
                     # handle other tags if they exist
                     pass
+            elif token.type == TokenType.SYMBOL and token.value == '#':
+                # Parse attributes and attach to the following declaration
+                attrs = self.parse_attributes()
+                # Peek at next token to determine what follows
+                next_token = self.peek()
+                if next_token.type == TokenType.KEYWORD:
+                    if next_token.value == 'export':
+                        declarations.append(self.parse_function_def(True, attrs))
+                    elif next_token.value == 'pub':
+                        declarations.append(self.parse_global_var(attrs))
+                    else:
+                        raise RuntimeError(f"Unexpected keyword {next_token.value} after attribute at line {next_token.line}")
+                elif next_token.type == TokenType.IDENTIFIER:
+                    # Function definition without export
+                    if self.peek(1).type == TokenType.SYMBOL and self.peek(1).value == '(':
+                        declarations.append(self.parse_function_def(False, attrs))
+                    else:
+                        raise RuntimeError(f"Expected function definition after attribute at line {next_token.line}")
+                else:
+                    raise RuntimeError(f"Expected declaration after attribute at line {token.line}")
             elif token.type == TokenType.KEYWORD:
                 if token.value == 'data':
                     data_block = self.parse_data_block()
@@ -325,7 +404,7 @@ class Parser:
                             with open(full_path, 'r') as f:
                                 import_code = f.read()
                             import_tokens = tokenize(import_code)
-                            import_parser = Parser(import_tokens, os.path.dirname(full_path), self.imported_files)
+                            import_parser = Parser(import_tokens, os.path.dirname(full_path), self.imported_files, full_path)
                             import_program = import_parser.parse()
                             
                             # Merge declarations
@@ -358,7 +437,7 @@ class Parser:
             else:
                 self.consume() # Skip unknown tokens for now
 
-        return Program(outtype, data_block, declarations, 1, 1)
+        return Program(outtype, data_block, declarations, 1, 1, self.source_file)
 
     def parse_data_block(self):
         start_token = self.consume(TokenType.KEYWORD, 'data')
@@ -380,7 +459,7 @@ class Parser:
                 value = self.consume().value  # Could be string or number
                 entries.append((type_name, name, value))
         self.consume(TokenType.SYMBOL, '}')
-        return DataBlock(entries, structs, enums, start_token.line, start_token.column)
+        return DataBlock(entries, structs, enums, start_token.line, start_token.column, self.source_file)
 
     def parse_struct_def(self):
         start_token = self.consume(TokenType.KEYWORD, 'struct')
@@ -413,7 +492,7 @@ class Parser:
             self.consume(TokenType.SYMBOL, ';')
             fields.append((field_type, field_name))
         self.consume(TokenType.SYMBOL, '}')
-        return StructDef(name, fields, start_token.line, start_token.column)
+        return StructDef(name, fields, start_token.line, start_token.column, self.source_file)
 
     def parse_enum_def(self):
         start_token = self.consume(TokenType.KEYWORD, 'enum')
@@ -428,9 +507,9 @@ class Parser:
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()
         self.consume(TokenType.SYMBOL, '}')
-        return EnumDef(name, values, start_token.line, start_token.column)
+        return EnumDef(name, values, start_token.line, start_token.column, self.source_file)
 
-    def parse_global_var(self):
+    def parse_global_var(self, attributes=None):
         start_token = self.consume(TokenType.KEYWORD, 'pub')
         type_token = self.peek()
         if type_token.type not in [TokenType.KEYWORD, TokenType.IDENTIFIER]:
@@ -453,7 +532,7 @@ class Parser:
         self.consume(TokenType.SYMBOL, '=')
         expr = self.parse_expression()
         self.consume(TokenType.SYMBOL, ';')
-        return GlobalVarDecl(type_name, name, expr, is_array, array_size, start_token.line, start_token.column)
+        return GlobalVarDecl(type_name, name, expr, is_array, array_size, attributes, start_token.line, start_token.column, self.source_file)
 
     def parse_function_decl(self):
         start_token = self.consume(TokenType.KEYWORD, 'define')
@@ -466,9 +545,9 @@ class Parser:
         
         return_type = self.parse_type()
         self.consume(TokenType.SYMBOL, ';')
-        return FunctionDecl(name, params, return_type, start_token.line, start_token.column)
+        return FunctionDecl(name, params, return_type, start_token.line, start_token.column, self.source_file)
 
-    def parse_function_def(self, is_exported):
+    def parse_function_def(self, is_exported, attributes=None):
         if is_exported:
             start_token = self.consume(TokenType.KEYWORD, 'export')
         else:
@@ -488,7 +567,7 @@ class Parser:
             if stmt:
                 body.append(stmt)
         self.consume(TokenType.SYMBOL, '}')
-        return FunctionDef(name, params, return_type, body, is_exported, start_token.line, start_token.column)
+        return FunctionDef(name, params, return_type, body, is_exported, attributes, start_token.line, start_token.column, self.source_file)
 
     def parse_macro_def(self):
         self.consume(TokenType.KEYWORD, 'macro')
@@ -577,6 +656,57 @@ class Parser:
              self.consume()
              return None
 
+        # Handle attributes at statement level
+        if token.type == TokenType.SYMBOL and token.value == '#':
+            attrs = self.parse_attributes()
+            # Attributes at statement level should be followed by a variable declaration
+            next_token = self.peek()
+            if next_token.type == TokenType.KEYWORD and next_token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
+                # Variable declaration with attributes
+                type_name = self.parse_type()
+                name = self.consume(TokenType.IDENTIFIER).value
+                
+                is_array = False
+                array_size = None
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume() # [
+                    size_token = self.consume(TokenType.NUMBER)
+                    array_size = int(size_token.value)
+                    self.consume(TokenType.SYMBOL, ']')
+                    is_array = True
+                
+                if '[' in type_name and not type_name.endswith('[]'):
+                    open_b = type_name.rfind('[')
+                    size_str = type_name[open_b+1:-1]
+                    array_size = int(size_str)
+                    type_name = type_name[:open_b]
+                    is_array = True
+                
+                self.consume(TokenType.SYMBOL, '=')
+                expr = self.parse_expression()
+                self.consume(TokenType.SYMBOL, ';')
+                return VarDeclStmt(type_name, name, expr, is_array, array_size, attrs, token.line, token.column, self.source_file)
+            elif next_token.type == TokenType.IDENTIFIER:
+                # Struct variable declaration with attributes
+                struct_type = self.consume(TokenType.IDENTIFIER).value
+                var_name = self.consume(TokenType.IDENTIFIER).value
+                
+                is_array = False
+                array_size = None
+                if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                    self.consume() # [
+                    size_token = self.consume(TokenType.NUMBER)
+                    array_size = int(size_token.value)
+                    self.consume(TokenType.SYMBOL, ']')
+                    is_array = True
+
+                self.consume(TokenType.SYMBOL, '=')
+                expr = self.parse_expression()
+                self.consume(TokenType.SYMBOL, ';')
+                return VarDeclStmt(struct_type, var_name, expr, is_array, array_size, attrs, token.line, token.column, self.source_file)
+            else:
+                raise RuntimeError(f"Expected variable declaration after attribute at line {next_token.line}")
+
         if token.type == TokenType.IDENTIFIER and token.value in self.macros:
              self.expand_macro_invocation()
              
@@ -598,14 +728,14 @@ class Parser:
                 if self.peek().type == TokenType.KEYWORD and self.peek().value == 'void':
                     self.consume()
                     self.consume(TokenType.SYMBOL, ';')
-                    return ReturnStmt('void', None, token.line, token.column)
+                    return ReturnStmt('void', None, token.line, token.column, self.source_file)
                 
                 ret_type = self.parse_type()
                 expr = self.parse_expression()
                 self.consume(TokenType.SYMBOL, ';')
                 # Use 'return' token loc? Yes, that was consumed earlier.
                 # Accessing token from start of statement logic
-                return ReturnStmt(ret_type, expr, token.line, token.column)
+                return ReturnStmt(ret_type, expr, token.line, token.column, self.source_file)
             elif token.value == '$if':
                 return self.parse_if_stmt()
             elif token.value == '$while':
@@ -615,14 +745,31 @@ class Parser:
                 type_name = self.parse_type()
                 name = self.consume(TokenType.IDENTIFIER).value
                 
-                # Check if it's a field assignment (var.field)
+                # Check if it's a dotted name (could be field assignment or SonOf variable)
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
                     self.consume()  # .
-                    field_name = self.consume(TokenType.IDENTIFIER).value
+                    second_part = self.consume(TokenType.IDENTIFIER).value
+                    
+                    # Check if there's another dot (math.x.field would be field access on SonOf var)
+                    # or if this is a field assignment on a local struct
+                    # For now, we'll treat it as a dotted variable name (SonOf)
+                    # Store the full dotted name
+                    dotted_name = f"{name}.{second_part}"
+                    
+                    # Check if it's array access on the dotted name
+                    if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
+                        self.consume() # [
+                        index = self.parse_expression()
+                        self.consume(TokenType.SYMBOL, ']') # ]
+                        self.consume(TokenType.SYMBOL, '=')
+                        expr = self.parse_expression()
+                        self.consume(TokenType.SYMBOL, ';')
+                        return ArrayAssignStmt(type_name, dotted_name, index, expr, token.line, token.column, self.source_file)
+                    
                     self.consume(TokenType.SYMBOL, '=')
                     expr = self.parse_expression()
                     self.consume(TokenType.SYMBOL, ';')
-                    return FieldAssignStmt(type_name, name, field_name, expr, token.line, token.column)
+                    return VarAssignStmt(type_name, dotted_name, expr, token.line, token.column, self.source_file)
                 elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
                     self.consume() # [
                     index = self.parse_expression()
@@ -630,53 +777,53 @@ class Parser:
                     self.consume(TokenType.SYMBOL, '=')
                     expr = self.parse_expression()
                     self.consume(TokenType.SYMBOL, ';')
-                    return ArrayAssignStmt(type_name, name, index, expr, token.line, token.column)
+                    return ArrayAssignStmt(type_name, name, index, expr, token.line, token.column, self.source_file)
                 else:
                     self.consume(TokenType.SYMBOL, '=')
                     expr = self.parse_expression()
                     self.consume(TokenType.SYMBOL, ';')
-                    return VarAssignStmt(type_name, name, expr, token.line, token.column)
+                    return VarAssignStmt(type_name, name, expr, token.line, token.column, self.source_file)
             elif token.value == 'jmp':
                 self.consume()
                 target = self.consume(TokenType.LABEL).value
                 self.consume(TokenType.SYMBOL, ';')
-                return JmpStmt(target, token.line, token.column)
+                return JmpStmt(target, token.line, token.column, self.source_file)
             elif token.value == 'ifn':
                 self.consume()
                 cond = self.consume(TokenType.IDENTIFIER).value
                 self.consume(TokenType.SYMBOL, ',')
                 target = self.consume(TokenType.LABEL).value
                 self.consume(TokenType.SYMBOL, ';')
-                return IfnStmt(cond, target, token.line, token.column)
+                return IfnStmt(cond, target, token.line, token.column, self.source_file)
             elif token.value == 'cmp_t':
                 self.consume()
                 cond = self.consume(TokenType.IDENTIFIER).value
                 self.consume(TokenType.SYMBOL, ',')
                 target = self.consume(TokenType.LABEL).value
                 self.consume(TokenType.SYMBOL, ';')
-                return CmpTStmt(cond, target, token.line, token.column)
+                return CmpTStmt(cond, target, token.line, token.column, self.source_file)
             elif token.value == 'push':
                 self.consume()
                 type_name = self.parse_type()
                 expr = self.parse_expression()
                 self.consume(TokenType.SYMBOL, ';')
-                return PushStmt(type_name, expr, token.line, token.column)
+                return PushStmt(type_name, expr, token.line, token.column, self.source_file)
             elif token.value == 'pop':
                 self.consume()
                 type_name = self.parse_type()
                 var_name = self.consume(TokenType.IDENTIFIER).value
                 self.consume(TokenType.SYMBOL, ';')
-                return PopStmt(type_name, var_name, token.line, token.column)
+                return PopStmt(type_name, var_name, token.line, token.column, self.source_file)
             elif token.value == 'swap':
                 self.consume()
                 type_name = self.parse_type()
                 self.consume(TokenType.SYMBOL, ';')
-                return SwapStmt(type_name, token.line, token.column)
+                return SwapStmt(type_name, token.line, token.column, self.source_file)
             elif token.value == 'dup':
                 self.consume()
                 type_name = self.parse_type()
                 self.consume(TokenType.SYMBOL, ';')
-                return DupStmt(type_name, token.line, token.column)
+                return DupStmt(type_name, token.line, token.column, self.source_file)
             elif token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
                 # Variable declaration
                 type_name = self.parse_type()
@@ -709,11 +856,11 @@ class Parser:
                 self.consume(TokenType.SYMBOL, '=')
                 expr = self.parse_expression()
                 self.consume(TokenType.SYMBOL, ';')
-                return VarDeclStmt(type_name, name, expr, is_array, array_size, token.line, token.column)
+                return VarDeclStmt(type_name, name, expr, is_array, array_size, None, token.line, token.column, self.source_file)
         elif token.type == TokenType.LABEL:
             label_name = self.consume().value
             self.consume(TokenType.SYMBOL, ':')
-            return LabelDef(label_name, token.line, token.column)
+            return LabelDef(label_name, token.line, token.column, self.source_file)
         elif token.type == TokenType.IDENTIFIER:
             # Could be struct variable declaration: StructName varName = { ... };
             struct_type = self.consume(TokenType.IDENTIFIER).value
@@ -731,7 +878,7 @@ class Parser:
             self.consume(TokenType.SYMBOL, '=')
             expr = self.parse_expression()
             self.consume(TokenType.SYMBOL, ';')
-            return VarDeclStmt(struct_type, var_name, expr, is_array, array_size, token.line, token.column)
+            return VarDeclStmt(struct_type, var_name, expr, is_array, array_size, None, token.line, token.column, self.source_file)
         raise RuntimeError(f"Unknown statement {token}")
 
     def parse_expression(self, min_prec=1):
@@ -741,7 +888,7 @@ class Parser:
         if token.type == TokenType.SYMBOL and token.value == '-' and self.peek(1).type == TokenType.NUMBER:
              self.consume() # -
              num_token = self.consume()
-             return LiteralExpr(-num_token.value, token.line, token.column)
+             return LiteralExpr(-num_token.value, token.line, token.column, self.source_file)
              
         # Support both primitive keywords and custom struct/enum types as casts
         is_type = False
@@ -760,17 +907,17 @@ class Parser:
                 self.consume(TokenType.SYMBOL, '(')
                 expr = self.parse_expression(1)
                 self.consume(TokenType.SYMBOL, ')')
-                lhs = TypeCastExpr(type_name, expr, token.line, token.column)
+                lhs = TypeCastExpr(type_name, expr, token.line, token.column, self.source_file)
             else:
                 # type expr
                 rhs = self.parse_expression(11) # High precedence
-                lhs = TypeCastExpr(type_name, rhs, token.line, token.column)
+                lhs = TypeCastExpr(type_name, rhs, token.line, token.column, self.source_file)
             return self.parse_op_continuation(lhs, min_prec)
             
         elif token.type == TokenType.SYMBOL and token.value in ['~', '&', '*']:
             op = self.consume().value
             rhs = self.parse_expression(11) # High precedence
-            lhs = UnaryExpr(op, rhs, token.line, token.column)
+            lhs = UnaryExpr(op, rhs, token.line, token.column, self.source_file)
             return self.parse_op_continuation(lhs, min_prec)
             
         lhs = self.parse_primary()
@@ -804,7 +951,7 @@ class Parser:
             self.consume()
             rhs = self.parse_expression(prec + 1)
             # BinaryExpr should take location of the operator? Or LHS? usually op.
-            lhs = BinaryExpr(lhs, op, rhs, token.line, token.column)
+            lhs = BinaryExpr(lhs, op, rhs, token.line, token.column, self.source_file)
             
         return lhs
 
@@ -837,7 +984,7 @@ class Parser:
             conditions_and_bodies.append((None, body))
             
         self.consume(TokenType.KEYWORD, '$endif')
-        return IfStmt(conditions_and_bodies, start_token.line, start_token.column)
+        return IfStmt(conditions_and_bodies, start_token.line, start_token.column, self.source_file)
 
     def parse_while_stmt(self):
         start_token = self.consume(TokenType.KEYWORD, '$while')
@@ -846,7 +993,7 @@ class Parser:
         while self.peek().type != TokenType.KEYWORD or self.peek().value != '$endwhile':
             body.append(self.parse_statement())
         self.consume(TokenType.KEYWORD, '$endwhile')
-        return WhileStmt(condition, body, start_token.line, start_token.column)
+        return WhileStmt(condition, body, start_token.line, start_token.column, self.source_file)
 
     def parse_primary(self):
         token = self.peek()
@@ -859,26 +1006,33 @@ class Parser:
              return self.parse_expression() # Recurse
 
         if token.type == TokenType.NUMBER:
-            return LiteralExpr(self.consume().value, token.line, token.column)
+            return LiteralExpr(self.consume().value, token.line, token.column, self.source_file)
         elif token.type == TokenType.STRING:
-            return LiteralExpr(self.consume().value, token.line, token.column)
+            return LiteralExpr(self.consume().value, token.line, token.column, self.source_file)
         elif token.type == TokenType.CHAR:
-            return LiteralExpr(self.consume().value, token.line, token.column)
+            return LiteralExpr(self.consume().value, token.line, token.column, self.source_file)
         elif token.type == TokenType.IDENTIFIER and token.value == 'length':
             self.consume() # length
             self.consume(TokenType.SYMBOL, '(')
             expr = self.parse_expression()
             self.consume(TokenType.SYMBOL, ')')
-            return LengthExpr(expr, token.line, token.column)
+            return LengthExpr(expr, token.line, token.column, self.source_file)
         elif token.type == TokenType.IDENTIFIER and token.value == 'gettype':
             self.consume() # gettype
             self.consume(TokenType.SYMBOL, '(')
             expr = self.parse_expression()
             self.consume(TokenType.SYMBOL, ')')
-            return GetTypeExpr(expr, token.line, token.column)
+            return GetTypeExpr(expr, token.line, token.column, self.source_file)
         elif token.type == TokenType.KEYWORD and token.value == 'call':
             self.consume()  # call
             name = self.consume(TokenType.IDENTIFIER).value
+            
+            # Check for dotted name (e.g., math.add for SonOf attribute)
+            while self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
+                self.consume()  # consume '.'
+                next_part = self.consume(TokenType.IDENTIFIER).value
+                name = f"{name}.{next_part}"
+            
             self.consume(TokenType.SYMBOL, '(')
             args = []
             while self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
@@ -888,10 +1042,10 @@ class Parser:
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                     self.consume()
             self.consume(TokenType.SYMBOL, ')')
-            return CallExpr(name, args, token.line, token.column)
+            return CallExpr(name, args, token.line, token.column, self.source_file)
         elif token.type == TokenType.KEYWORD and token.value == 'no_value':
             self.consume()
-            return NoValueExpr(token.line, token.column)
+            return NoValueExpr(token.line, token.column, self.source_file)
         elif token.type == TokenType.SYMBOL and token.value == '(':
             self.consume()  # (
             expr = self.parse_expression()
@@ -913,9 +1067,9 @@ class Parser:
             if name in self.enum_names and self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
                 self.consume() # .
                 val_name = self.consume(TokenType.IDENTIFIER).value
-                return EnumValueExpr(name, val_name, token.line, token.column)
+                return EnumValueExpr(name, val_name, token.line, token.column, self.source_file)
 
-            expr = VarRefExpr(name, token.line, token.column)
+            expr = VarRefExpr(name, token.line, token.column, self.source_file)
             
             while True:
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
@@ -930,16 +1084,16 @@ class Parser:
                     
                     dot_token = self.consume()
                     field_name = self.consume(TokenType.IDENTIFIER).value
-                    expr = FieldAccessExpr(expr, field_name, dot_token.line, dot_token.column)
+                    expr = FieldAccessExpr(expr, field_name, dot_token.line, dot_token.column, self.source_file)
                 elif self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
                     bracket_token = self.consume() # [
                     if self.peek().type == TokenType.SYMBOL and self.peek().value == ']':
                          self.consume() # ]
-                         expr = ArrayAccessExpr(expr, None, bracket_token.line, bracket_token.column)
+                         expr = ArrayAccessExpr(expr, None, bracket_token.line, bracket_token.column, self.source_file)
                     else:
                          index = self.parse_expression()
                          self.consume(TokenType.SYMBOL, ']')
-                         expr = ArrayAccessExpr(expr, index, bracket_token.line, bracket_token.column)
+                         expr = ArrayAccessExpr(expr, index, bracket_token.line, bracket_token.column, self.source_file)
                 elif self.peek().type == TokenType.SYMBOL and self.peek().value == '(':
                     # Args access: myargs(y)
                     paren_token = self.consume() # (
@@ -950,7 +1104,7 @@ class Parser:
                          # It might be a regular call, but in BCB calls use 'call' keyword.
                          # This syntax is specifically for variadic arg access.
                          pass
-                    expr = ArgsAccessExpr(expr.name if isinstance(expr, VarRefExpr) else expr, index, paren_token.line, paren_token.column)
+                    expr = ArgsAccessExpr(expr.name if isinstance(expr, VarRefExpr) else expr, index, paren_token.line, paren_token.column, self.source_file)
                 else:
                     break
             
@@ -985,7 +1139,7 @@ class Parser:
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()
         self.consume(TokenType.SYMBOL, '}')
-        return StructLiteralExpr(None, field_values, start_token.line, start_token.column)  # struct_type será inferido do contexto
+        return StructLiteralExpr(None, field_values, start_token.line, start_token.column, self.source_file)  # struct_type será inferido do contexto
 
     def parse_array_literal(self):
         start_token = self.consume(TokenType.SYMBOL, '{')
@@ -995,12 +1149,19 @@ class Parser:
             if self.peek().type == TokenType.SYMBOL and self.peek().value == ',':
                 self.consume()
         self.consume(TokenType.SYMBOL, '}')
-        return ArrayLiteralExpr(values, start_token.line, start_token.column)
+        return ArrayLiteralExpr(values, start_token.line, start_token.column, self.source_file)
 
     def parse_call_stmt(self):
         # We already consumed 'call' in some cases, but here we expect it as a statement
         token = self.consume(TokenType.KEYWORD, 'call')
         name = self.consume(TokenType.IDENTIFIER).value
+        
+        # Check for dotted name (e.g., math.add for SonOf attribute)
+        while self.peek().type == TokenType.SYMBOL and self.peek().value == '.':
+            self.consume()  # consume '.'
+            next_part = self.consume(TokenType.IDENTIFIER).value
+            name = f"{name}.{next_part}"
+        
         self.consume(TokenType.SYMBOL, '(')
         args = []
         while self.peek().type != TokenType.SYMBOL or self.peek().value != ')':
@@ -1028,7 +1189,7 @@ class Parser:
                 self.consume()
         self.consume(TokenType.SYMBOL, ')')
         self.consume(TokenType.SYMBOL, ';')
-        return CallExpr(name, args, token.line, token.column)
+        return CallExpr(name, args, token.line, token.column, self.source_file)
 
     def expand_macro_invocation(self):
         name = self.consume(TokenType.IDENTIFIER).value

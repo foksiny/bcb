@@ -1,5 +1,5 @@
 from .parser import *
-from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt
+from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, FieldAssignStmt
 from .errors import DiagnosticLevel
 
 class SemanticAnalyzer:
@@ -14,10 +14,14 @@ class SemanticAnalyzer:
         self.function_stack = [] # Virtual stack for tracking push/pop types
         self.declared_vars = [] # List of (name, scope_depth, node)
         self.used_vars = set()      # (name, scope_depth)
+        self.used_globals = set()   # names of used global variables
+        self.declared_globals = []  # List of (name, node) for global variables
         self.used_functions = {"printf", "malloc", "free", "exit"} # name
         self.declared_params = []   # (func_name, param_name, node)
         self.used_params = set()    # (func_name, param_name)
         self.in_condition = False
+        self.son_of_map = {}  # Maps parent_name -> list of (child_name, node_type, node)
+                              # where node_type is 'function' or 'variable'
 
     def enter_scope(self):
         self.scopes.append({})
@@ -34,6 +38,9 @@ class SemanticAnalyzer:
                 else:
                      self.error(f"Redeclaration of global variable '{name}'", node)
             self.global_scope[name] = type_info
+            # Track global variables for unused warning (only if not a function)
+            if not isinstance(type_info, tuple) or type_info[0] != "function":
+                self.declared_globals.append((name, node))
         else:
             if name in self.scopes[-1]:
                 self.error(f"Redeclaration of variable '{name}'", node)
@@ -50,6 +57,34 @@ class SemanticAnalyzer:
             self.declared_vars.append((name, scope_depth, node))
 
     def lookup(self, name, track=True):
+        # Check for dotted name (e.g., math.add for SonOf attribute)
+        if '.' in name:
+            parts = name.split('.', 1)
+            parent_name = parts[0]
+            child_name = parts[1]
+            
+            # Check if parent exists in son_of_map
+            if parent_name in self.son_of_map:
+                for child, node_type, node in self.son_of_map[parent_name]:
+                    if child == child_name:
+                        if track:
+                            # Track usage of the actual function/variable
+                            self.used_functions.add(child_name)
+                            self.used_globals.add(child_name)  # Track global variable usage
+                            if self.current_function:
+                                self.used_params.add((self.current_function.name, child_name))
+                        
+                        # Return the appropriate info
+                        if node_type == 'function':
+                            return self.global_scope.get(child_name)
+                        else:
+                            # For variables, return the type
+                            return self.lookup(child_name, track)
+            # If parent is not in son_of_map, this is a struct field access
+            # which should be handled by FieldAccessExpr, not lookup
+            # Return None to let the caller handle it
+            return None
+        
         # Check local scopes in reverse
         for i, scope in enumerate(reversed(self.scopes)):
             if name in scope:
@@ -66,7 +101,13 @@ class SemanticAnalyzer:
         # Check global scope (functions, data)
         if name in self.global_scope:
             if track:
-                self.used_functions.add(name)
+                info = self.global_scope[name]
+                # Check if it's a function or a global variable
+                if isinstance(info, tuple) and info[0] == "function":
+                    self.used_functions.add(name)
+                else:
+                    # It's a global variable
+                    self.used_globals.add(name)
                 # Track for parameter usage even if global (to suppress false unused warnings)
                 if self.current_function:
                     self.used_params.add((self.current_function.name, name))
@@ -126,7 +167,7 @@ class SemanticAnalyzer:
                       if 0 <= val <= 255: # standard ascii/byte
                            return
                  
-                 self.errors.pre(f"Implicit conversion from '{actual}' to 'char' may truncate value", node.line, node.column, "Use explicit cast if intended.")
+                 self.errors.pre(f"Implicit conversion from '{actual}' to 'char' may truncate value", node.line, node.column, "Use explicit cast if intended.", node.source_file if node else None)
             elif target in ["int8", "int16", "int32"] and actual == "int64":
                  # Check if literal value fits
                  if expr_node and isinstance(expr_node, LiteralExpr) and isinstance(expr_node.value, int):
@@ -138,7 +179,7 @@ class SemanticAnalyzer:
                       
                       if fits: return
 
-                 self.errors.pre(f"Implicit conversion from 'int64' to '{target}' may truncate value", node.line, node.column)
+                 self.errors.pre(f"Implicit conversion from 'int64' to '{target}' may truncate value", node.line, node.column, source_file=node.source_file if node else None)
 
     
     def analyze(self):
@@ -164,8 +205,15 @@ class SemanticAnalyzer:
                          self.error(f"Invalid array size {decl.array_size} for global '{decl.name}'", decl)
                 self.declare(decl.name, declared_type, decl)
                 self.check_type_compatibility(declared_type, expr_type, decl, f"declaration of global variable '{decl.name}'", expr_node=decl.expr)
+                
+                # Register SonOf attribute for global variables
+                self._register_son_of_attribute(decl.name, 'variable', decl)
+                
             elif isinstance(decl, (FunctionDef, FunctionDecl)):
                 self.global_scope[decl.name] = ("function", decl.return_type, decl.params)
+                
+                # Register SonOf attribute for functions
+                self._register_son_of_attribute(decl.name, 'function', decl)
 
         # 3. Analyze Function Bodies
         for decl in self.ast.declarations:
@@ -183,6 +231,29 @@ class SemanticAnalyzer:
                            break
                  if func_node and name != "main":
                       self.warning(f"Unused function '{name}'", func_node)
+        
+        # 5. Check for unused global variables
+        for name, node in self.declared_globals:
+            if name not in self.used_globals:
+                # Ignore if it starts with underscore
+                if not name.startswith('_'):
+                    self.warning(f"Unused variable '{name}'", node)
+    
+    def _register_son_of_attribute(self, name, node_type, node):
+        """Register a function or variable with a SonOf attribute in the son_of_map."""
+        if not hasattr(node, 'attributes') or not node.attributes:
+            return
+        
+        for attr in node.attributes:
+            if attr.name == 'SonOf' and attr.args:
+                # Get the parent name from the first argument
+                for arg_type, arg_value in attr.args:
+                    if arg_type == 'identifier':
+                        parent_name = arg_value
+                        if parent_name not in self.son_of_map:
+                            self.son_of_map[parent_name] = []
+                        self.son_of_map[parent_name].append((name, node_type, node))
+                        break
 
     def analyze_function(self, func):
         self.current_function = func
@@ -209,10 +280,10 @@ class SemanticAnalyzer:
                  is_reachable = False
             
         # Check for unused local variables in this function
-        # Locals are those at scope_depth >= 1
+        # Locals are those at scope_depth >= 0 (inside the function scope)
         for i in range(start_declared, len(self.declared_vars)):
             name, depth, node = self.declared_vars[i]
-            if depth >= 1 and (name, depth) not in self.used_vars:
+            if depth >= 0 and (name, depth) not in self.used_vars:
                  # Ignore if it starts with underscore
                  if not name.startswith('_'):
                       self.warning(f"Unused variable '{name}'", node)
@@ -250,8 +321,35 @@ class SemanticAnalyzer:
                      # var_type should be int32*
                      # target of assignment is int32 (what ptr points to)
                      target_type = var_type[:-1] # strip *
-                
+                 
                 self.check_type_compatibility(target_type, expr_type, stmt, f"assignment to '{stmt.name}'", expr_node=stmt.expr)
+
+        elif isinstance(stmt, FieldAssignStmt):
+            # Handle field assignment: md type var.field = expr
+            var_type = self.lookup(stmt.var_name)
+            if not var_type:
+                self.error(f"Undefined variable '{stmt.var_name}'", stmt)
+                return
+            
+            # Check if var_type is a struct
+            if var_type in self.structs:
+                s = self.structs[var_type]
+                # Find the field
+                field_type = None
+                for ft, fn in s.fields:
+                    if fn == stmt.field_name:
+                        field_type = ft
+                        break
+                
+                if not field_type:
+                    self.error(f"Struct '{var_type}' has no field '{stmt.field_name}'", stmt)
+                    return
+                
+                # Analyze the expression
+                expr_type = self.analyze_expr(stmt.expr)
+                self.check_type_compatibility(field_type, expr_type, stmt, f"assignment to field '{stmt.var_name}.{stmt.field_name}'", expr_node=stmt.expr)
+            else:
+                self.error(f"Cannot access field '{stmt.field_name}' on non-struct type '{var_type}'", stmt)
 
         elif isinstance(stmt, ReturnStmt):
             if stmt.expr:
@@ -362,6 +460,40 @@ class SemanticAnalyzer:
                  self.warning(f"Dup type '{stmt.type_name}' does not match stack top type '{top_type}'", stmt)
 
     def analyze_lvalue(self, name, node):
+        # Handle dotted name (struct field access or SonOf variable)
+        if '.' in name:
+            parts = name.split('.', 1)
+            parent_name = parts[0]
+            child_name = parts[1]
+            
+            # Check if this is a SonOf variable first
+            if parent_name in self.son_of_map:
+                for child, node_type, child_node in self.son_of_map[parent_name]:
+                    if child == child_name:
+                        # This is a SonOf variable, look it up
+                        return self.lookup(child_name)
+            
+            # Otherwise, this is a struct field access
+            # Look up the parent variable type
+            parent_type = self.lookup(parent_name)
+            if not parent_type:
+                self.error(f"Undefined variable '{parent_name}'", node)
+                return None
+            
+            # Check if parent is a struct
+            if parent_type in self.structs:
+                s = self.structs[parent_type]
+                # Find the field
+                for field_type, field_name in s.fields:
+                    if field_name == child_name:
+                        return field_type
+                self.error(f"Struct '{parent_type}' has no field '{child_name}'", node)
+                return None
+            else:
+                self.error(f"Cannot access field '{child_name}' on non-struct type '{parent_type}'", node)
+                return None
+        
+        # Regular variable lookup
         t = self.lookup(name)
         if not t:
             self.error(f"Undefined variable '{name}'", node)
@@ -403,11 +535,11 @@ class SemanticAnalyzer:
              # Constant evaluation for specific pre-checks
             if isinstance(expr.left, LiteralExpr) and isinstance(expr.right, LiteralExpr):
                  if expr.op == '/' and expr.right.value == 0:
-                      self.errors.pre("Division by zero detected", expr.line, expr.column, hint="Ensure the divisor is non-zero at runtime.")
+                      self.errors.pre("Division by zero detected", expr.line, expr.column, hint="Ensure the divisor is non-zero at runtime.", source_file=expr.source_file)
                  elif expr.op == '%' and expr.right.value == 0:
-                      self.errors.pre("Modulo by zero detected", expr.line, expr.column)
+                      self.errors.pre("Modulo by zero detected", expr.line, expr.column, source_file=expr.source_file)
                  elif expr.op == '/' and expr.right.value == 0.0:
-                      self.errors.pre("Division by zero (float) detected", expr.line, expr.column, hint="Floating point division by zero results in 'inf' or 'nan'.")
+                      self.errors.pre("Division by zero (float) detected", expr.line, expr.column, hint="Floating point division by zero results in 'inf' or 'nan'.", source_file=expr.source_file)
 
             # Simple interaction rules
             res_type = "int32" # Default to int32 math
@@ -527,6 +659,14 @@ class SemanticAnalyzer:
             # If not a variable, check if it's an Enum.
             if isinstance(expr.obj, VarRefExpr):
                 var_type = self.lookup(expr.obj.name)
+                
+                # Check if this is a SonOf variable access (parent.child)
+                if expr.obj.name in self.son_of_map:
+                    for child_name, node_type, node in self.son_of_map[expr.obj.name]:
+                        if child_name == expr.field_name:
+                            # Found a SonOf variable - look up the actual variable
+                            return self.lookup(child_name)
+                
                 if not var_type and expr.obj.name in self.enums:
                      # It is an Enum access
                      e = self.enums[expr.obj.name]
@@ -594,30 +734,53 @@ class SemanticAnalyzer:
          # Helper to wrap error with context hint
          l = line if line is not None else (node.line if node else 0)
          c = column if column is not None else (node.column if node else 0)
+         source_file = node.source_file if node else None
          if hint is None:
              hint = self.get_hint_for_error(message)
-         self.errors.add(DiagnosticLevel.ERROR, message, l, c, hint=hint)
+         self.errors.add(DiagnosticLevel.ERROR, message, l, c, hint=hint, source_file=source_file)
 
     def warning(self, message, node=None, line=None, column=None, hint=None):
+        # Check if this warning should be suppressed by a NoWarning attribute
+        if node and self.has_no_warning_attribute(node, message):
+            return
+        
         l = line if line is not None else (node.line if node else 0)
         c = column if column is not None else (node.column if node else 0)
+        source_file = node.source_file if node else None
         if hint is None:
              hint = self.get_hint_for_error(message)
-        self.errors.add(DiagnosticLevel.WARNING, message, l, c, hint=hint)
+        self.errors.add(DiagnosticLevel.WARNING, message, l, c, hint=hint, source_file=source_file)
+
+    def has_no_warning_attribute(self, node, message):
+        """Check if the node has a #NoWarning attribute that matches the warning type."""
+        if not hasattr(node, 'attributes') or not node.attributes:
+            return False
+        
+        for attr in node.attributes:
+            if attr.name == 'NoWarning':
+                # Check if any of the attribute arguments match the warning type
+                for arg_type, arg_value in attr.args:
+                    if arg_type == 'string':
+                        # Check if the warning message contains the specified type
+                        if arg_value.lower() in message.lower():
+                            return True
+        return False
 
     def tip(self, message, node=None, line=None, column=None, hint=None):
         l = line if line is not None else (node.line if node else 0)
         c = column if column is not None else (node.column if node else 0)
+        source_file = node.source_file if node else None
         if hint is None:
              hint = self.get_hint_for_error(message)
-        self.errors.add(DiagnosticLevel.TIP, message, l, c, hint=hint)
+        self.errors.add(DiagnosticLevel.TIP, message, l, c, hint=hint, source_file=source_file)
 
     def pre(self, message, node=None, line=None, column=None, hint=None):
         l = line if line is not None else (node.line if node else 0)
         c = column if column is not None else (node.column if node else 0)
+        source_file = node.source_file if node else None
         if hint is None:
              hint = self.get_hint_for_error(message)
-        self.errors.add(DiagnosticLevel.PRE, message, l, c, hint=hint)
+        self.errors.add(DiagnosticLevel.PRE, message, l, c, hint=hint, source_file=source_file)
 
     def are_expressions_identical(self, left, right):
         """Heuristic to check if two expressions are exactly the same."""
@@ -639,6 +802,29 @@ class SemanticAnalyzer:
 
     def analyze_call(self, call_node):
         func_info = self.lookup(call_node.name)
+        
+        # Check if this is a SonOf function being called without the parent prefix
+        if '.' not in call_node.name:
+            # Find the function definition to check for SonOf attribute
+            func_def = None
+            for decl in self.ast.declarations:
+                if isinstance(decl, (FunctionDef, FunctionDecl)) and decl.name == call_node.name:
+                    func_def = decl
+                    break
+            
+            if func_def and hasattr(func_def, 'attributes') and func_def.attributes:
+                for attr in func_def.attributes:
+                    if attr.name == 'SonOf' and attr.args:
+                        # Get the parent name from the first argument
+                        for arg_type, arg_value in attr.args:
+                            if arg_type == 'identifier':
+                                parent_name = arg_value
+                                self.error(
+                                    f"Function '{call_node.name}' must be called with parent prefix '{parent_name}.{call_node.name}'",
+                                    call_node,
+                                    hint=f"'{call_node.name}' is a child of '{parent_name}' (defined with #SonOf({parent_name})). Use '{parent_name}.{call_node.name}()' to call it."
+                                )
+                                break
         
         # Always analyze arguments to track usage and find errors within them
         for arg_type, arg_expr in call_node.args:
