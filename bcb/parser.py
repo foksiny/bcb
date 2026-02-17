@@ -281,10 +281,18 @@ class Parser:
                     self.consume() # ]
                     type_name += '[]'
                 else:
-                    # Fixed size e.g. int32[10]
-                    size_token = self.consume(TokenType.NUMBER)
+                    # Fixed size e.g. int32[10] or int32[arraysize]
+                    # Accept either a number or an identifier (variable name) for array size
+                    if self.peek().type == TokenType.NUMBER:
+                        size_token = self.consume(TokenType.NUMBER)
+                        type_name += f"[{size_token.value}]"
+                    elif self.peek().type == TokenType.IDENTIFIER:
+                        # Variable name as array size
+                        size_token = self.consume(TokenType.IDENTIFIER)
+                        type_name += f"[{size_token.value}]"
+                    else:
+                        raise RuntimeError(f"Expected number or identifier for array size at line {self.peek().line}")
                     self.consume(TokenType.SYMBOL, ']')
-                    type_name += f"[{size_token.value}]"
             else:
                 break
         return type_name
@@ -524,8 +532,16 @@ class Parser:
         array_size = None
         if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
             self.consume() # [
-            size_token = self.consume(TokenType.NUMBER)
-            array_size = int(size_token.value)
+            # Accept either a number or an identifier (variable name) for array size
+            if self.peek().type == TokenType.NUMBER:
+                size_token = self.consume(TokenType.NUMBER)
+                array_size = int(size_token.value)
+            elif self.peek().type == TokenType.IDENTIFIER:
+                # Variable name as array size
+                size_token = self.consume(TokenType.IDENTIFIER)
+                array_size = size_token.value  # Store as string (variable name)
+            else:
+                raise RuntimeError(f"Expected number or identifier for array size at line {self.peek().line}")
             self.consume(TokenType.SYMBOL, ']')
             is_array = True
         
@@ -670,8 +686,16 @@ class Parser:
                 array_size = None
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
                     self.consume() # [
-                    size_token = self.consume(TokenType.NUMBER)
-                    array_size = int(size_token.value)
+                    # Accept either a number or an identifier (variable name) for array size
+                    if self.peek().type == TokenType.NUMBER:
+                        size_token = self.consume(TokenType.NUMBER)
+                        array_size = int(size_token.value)
+                    elif self.peek().type == TokenType.IDENTIFIER:
+                        # Variable name as array size
+                        size_token = self.consume(TokenType.IDENTIFIER)
+                        array_size = size_token.value  # Store as string (variable name)
+                    else:
+                        raise RuntimeError(f"Expected number or identifier for array size at line {self.peek().line}")
                     self.consume(TokenType.SYMBOL, ']')
                     is_array = True
                 
@@ -695,8 +719,16 @@ class Parser:
                 array_size = None
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
                     self.consume() # [
-                    size_token = self.consume(TokenType.NUMBER)
-                    array_size = int(size_token.value)
+                    # Accept either a number or an identifier (variable name) for array size
+                    if self.peek().type == TokenType.NUMBER:
+                        size_token = self.consume(TokenType.NUMBER)
+                        array_size = int(size_token.value)
+                    elif self.peek().type == TokenType.IDENTIFIER:
+                        # Variable name as array size
+                        size_token = self.consume(TokenType.IDENTIFIER)
+                        array_size = size_token.value  # Store as string (variable name)
+                    else:
+                        raise RuntimeError(f"Expected number or identifier for array size at line {self.peek().line}")
                     self.consume(TokenType.SYMBOL, ']')
                     is_array = True
 
@@ -838,8 +870,16 @@ class Parser:
                 if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
                     # If it's something like 'int32 x[10]', parse_type got 'int32'.
                     self.consume() # [
-                    size_token = self.consume(TokenType.NUMBER)
-                    array_size = int(size_token.value)
+                    # Accept either a number or an identifier (variable name) for array size
+                    if self.peek().type == TokenType.NUMBER:
+                        size_token = self.consume(TokenType.NUMBER)
+                        array_size = int(size_token.value)
+                    elif self.peek().type == TokenType.IDENTIFIER:
+                        # Variable name as array size
+                        size_token = self.consume(TokenType.IDENTIFIER)
+                        array_size = size_token.value  # Store as string (variable name)
+                    else:
+                        raise RuntimeError(f"Expected number or identifier for array size at line {self.peek().line}")
                     self.consume(TokenType.SYMBOL, ']')
                     is_array = True
                 
@@ -870,8 +910,16 @@ class Parser:
             array_size = None
             if self.peek().type == TokenType.SYMBOL and self.peek().value == '[':
                 self.consume() # [
-                size_token = self.consume(TokenType.NUMBER)
-                array_size = int(size_token.value)
+                # Accept either a number or an identifier (variable name) for array size
+                if self.peek().type == TokenType.NUMBER:
+                    size_token = self.consume(TokenType.NUMBER)
+                    array_size = int(size_token.value)
+                elif self.peek().type == TokenType.IDENTIFIER:
+                    # Variable name as array size
+                    size_token = self.consume(TokenType.IDENTIFIER)
+                    array_size = size_token.value  # Store as string (variable name)
+                else:
+                    raise RuntimeError(f"Expected number or identifier for array size at line {self.peek().line}")
                 self.consume(TokenType.SYMBOL, ']')
                 is_array = True
 

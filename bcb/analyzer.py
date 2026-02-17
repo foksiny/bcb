@@ -201,8 +201,16 @@ class SemanticAnalyzer:
                 declared_type = decl.type_name
                 if decl.is_array:
                     declared_type += "[]"
-                    if decl.array_size <= 0:
-                         self.error(f"Invalid array size {decl.array_size} for global '{decl.name}'", decl)
+                    # Check if array_size is a variable name (string) or a number (int)
+                    if isinstance(decl.array_size, str):
+                        # It's a variable name - look it up
+                        size_var = self.lookup(decl.array_size, track=False)
+                        if not size_var:
+                            self.error(f"Unknown variable '{decl.array_size}' used as array size", decl)
+                        elif not isinstance(size_var, str) or not size_var.startswith('int'):
+                            self.error(f"Array size variable '{decl.array_size}' must be an integer type", decl)
+                    elif decl.array_size <= 0:
+                        self.error(f"Invalid array size {decl.array_size} for global '{decl.name}'", decl)
                 self.declare(decl.name, declared_type, decl)
                 self.check_type_compatibility(declared_type, expr_type, decl, f"declaration of global variable '{decl.name}'", expr_node=decl.expr)
                 
@@ -303,6 +311,16 @@ class SemanticAnalyzer:
             declared_type = stmt.type_name
             if stmt.is_array:
                 declared_type += "[]"
+                # Check if array_size is a variable name (string) or a number (int)
+                if isinstance(stmt.array_size, str):
+                    # It's a variable name - look it up
+                    size_var = self.lookup(stmt.array_size, track=False)
+                    if not size_var:
+                        self.error(f"Unknown variable '{stmt.array_size}' used as array size", stmt)
+                    elif not isinstance(size_var, str) or not size_var.startswith('int'):
+                        self.error(f"Array size variable '{stmt.array_size}' must be an integer type", stmt)
+                elif stmt.array_size is not None and stmt.array_size <= 0:
+                    self.error(f"Invalid array size {stmt.array_size} for variable '{stmt.name}'", stmt)
             self.declare(stmt.name, declared_type, stmt)
             
             # For array init with literal, we might need relaxed check or "array_literal" handling
@@ -617,8 +635,10 @@ class SemanticAnalyzer:
                            # Try to find declaration
                            decl_node = self.find_decl_node(expr.arr.name)
                            if decl_node and hasattr(decl_node, 'array_size') and decl_node.array_size is not None:
-                                if idx < 0 or idx >= decl_node.array_size:
-                                     self.pre(f"Array access out of bounds: index {idx} on array of size {decl_node.array_size}", expr, hint="Accessing memory outside array boundaries can lead to segments faults or memory corruption.")
+                                # Only check bounds if array_size is an int (not a variable name)
+                                if isinstance(decl_node.array_size, int):
+                                    if idx < 0 or idx >= decl_node.array_size:
+                                         self.pre(f"Array access out of bounds: index {idx} on array of size {decl_node.array_size}", expr, hint="Accessing memory outside array boundaries can lead to segments faults or memory corruption.")
 
                  if '[' in arr_type:
                      bracket_pos = arr_type.find('[')

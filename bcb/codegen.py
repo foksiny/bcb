@@ -33,6 +33,38 @@ class CodeGen:
         self.label_count += 1
         return f"{prefix}_{self.label_count}"
 
+    def resolve_array_size(self, array_size):
+        """Resolve array size to an integer value or generate runtime code.
+        
+        Args:
+            array_size: Either an int (literal size) or str (variable name)
+            
+        Returns:
+            int: The resolved array size (for compile-time constants)
+            tuple: (None, var_name) for runtime resolution
+            
+        Raises:
+            RuntimeError: If the variable name cannot be resolved
+        """
+        if isinstance(array_size, int):
+            return array_size
+        elif isinstance(array_size, str):
+            # It's a variable name - look it up in locals or globals
+            if array_size in self.locals:
+                # Return a tuple indicating runtime resolution is needed
+                return (None, array_size)
+            elif array_size in self.globals:
+                # Check if the global has a constant value
+                global_info = self.globals[array_size]
+                if isinstance(global_info.get('init'), LiteralExpr) and isinstance(global_info['init'].value, int):
+                    return global_info['init'].value
+                # For non-constant globals, we need runtime resolution
+                return (None, array_size)
+            else:
+                raise RuntimeError(f"Unknown variable '{array_size}' used as array size")
+        else:
+            raise RuntimeError(f"Invalid array size type: {type(array_size)}")
+
     def register_struct(self, struct_def):
         """Register a struct definition and calculate field offsets."""
         self.structs[struct_def.name] = struct_def.fields
@@ -112,7 +144,9 @@ class CodeGen:
                 # Arrays are handled differently in bcb? 
                 # For now let's assume they are similar to local but in .data
                 if decl.is_array:
-                    type_name += f"[{decl.array_size}]"
+                    # Resolve array size (could be int or variable name)
+                    resolved_size = self.resolve_array_size(decl.array_size)
+                    type_name += f"[{resolved_size}]"
                 self.globals[decl.name] = {'label': label, 'type': type_name, 'init': decl.expr}
         
         # 1. Populate data labels from the data block
@@ -612,91 +646,154 @@ class CodeGen:
                      # Array Declaration
                      element_type = stmt.type_name
                      element_size = self.get_type_size(element_type)
-                     # Add 8 bytes for length header
-                     total_size = stmt.array_size * element_size + 8
-                     # Align to 8 bytes
-                     aligned_size = ((total_size + 7) // 8) * 8
-                     self.next_local_offset += aligned_size
-                     self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
+                     # Resolve array size (could be int or variable name)
+                     resolved_array_size = self.resolve_array_size(stmt.array_size)
                      
-                     # Calculate offsets
-                     # Block start: [rbp - self.next_local_offset]
-                     # Length header: [rbp - self.next_local_offset]
-                     # Data start: [rbp - self.next_local_offset + 8]
-                     
-                     # Store length
-                     length_loc = f"[rbp - {self.next_local_offset}]"
-                     self.output.append(f"    mov qword ptr {length_loc}, {stmt.array_size}")
-                     
-                     # Mark as array type in locals
-                     # Point locals to DATA start.
-                     # self.next_local_offset points to bottom of block. 
-                     # data_offset = self.next_local_offset - 8
-                     var_offset = self.next_local_offset - 8
-                     # Store full type with size for fixed-size arrays (e.g., int32[10])
-                     self.locals[stmt.name] = (var_offset, element_type + f'[{stmt.array_size}]')
-                     
-                     # Initialization
-                     if isinstance(stmt.expr, ArrayLiteralExpr):
-                         for i, val_expr in enumerate(stmt.expr.values):
-                             if i >= stmt.array_size: break
-                             
-                             offset = i * element_size
-                             # Values are generated; expected type matches element
-                             self.gen_expression(val_expr, expected_type=element_type)
-                             
-                             # Store at [rbp - var_offset + offset]
-                             # var_offset is data start (distance from rbp). 
-                             # [rbp - var_offset] is data[0].
-                             # [rbp - (var_offset - offset)] -> [rbp - var_offset + offset]
-                             
-                             mem_loc = f"[rbp - {var_offset - offset}]"
-                             
-                             if element_type == 'float32':
-                                 self.output.append(f"    movss {mem_loc}, xmm0")
-                             elif element_type == 'float64':
-                                 self.output.append(f"    movsd {mem_loc}, xmm0")
-                             elif element_type == 'int32':
-                                 self.output.append(f"    mov dword ptr {mem_loc}, eax")
-                             elif element_type == 'int64' or element_type.endswith('*') or element_type == 'string':
-                                 self.output.append(f"    mov qword ptr {mem_loc}, rax")
-                             elif element_type == 'char' or element_type == 'int8':
-                                 self.output.append(f"    mov byte ptr {mem_loc}, al")
-                             elif element_type == 'int16':
-                                 self.output.append(f"    mov word ptr {mem_loc}, ax")
-                             elif element_type in self.enums:
-                                 self.output.append(f"    mov qword ptr {mem_loc}, rax")
-                             elif element_type in self.structs:
-                                 # Struct by value in array initialization
-                                 sz = self.get_struct_size(element_type)
-                                 # ...
+                     # Check if it's a runtime resolution (tuple) or compile-time (int)
+                     is_runtime_size = isinstance(resolved_array_size, tuple)
+                     if is_runtime_size:
+                         # Runtime VLA - we need to allocate on stack dynamically
+                         _, size_var_name = resolved_array_size
+                         
+                         # Load the size variable value into rcx
+                         if size_var_name in self.locals:
+                             offset, var_type = self.locals[size_var_name]
+                             self.output.append(f"    mov rcx, [rbp - {offset}]")
+                         elif size_var_name in self.globals:
+                             global_info = self.globals[size_var_name]
+                             self.output.append(f"    mov rcx, [rel {global_info['label']}]")
+                         else:
+                             raise RuntimeError(f"Unknown variable '{size_var_name}' used as array size")
+                         
+                         # Calculate total size: size * element_size + 8 (for length header)
+                         # rcx = array_size, we need rcx = array_size * element_size + 8
+                         self.output.append(f"    imul rcx, {element_size}")
+                         self.output.append(f"    add rcx, 8")
+                         # Align to 8 bytes
+                         self.output.append(f"    add rcx, 7")
+                         self.output.append(f"    and rcx, -8")  # Align down to 8 bytes
+                         
+                         # Allocate on stack
+                         self.output.append(f"    sub rsp, rcx")
+                         self.output.append(f"    mov rax, rsp")
+                         self.output.append(f"    add rax, 8")  # Point to data start
+                         
+                         # Store the array pointer and update tracking
+                         # We need to track this VLA differently
+                         self.next_local_offset += 8  # Just for the pointer
+                         self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
+                         
+                         # Store the pointer to the VLA
+                         ptr_offset = self.next_local_offset
+                         self.output.append(f"    mov [rbp - {ptr_offset}], rax")
+                         
+                         # Store the length in the length header
+                         if size_var_name in self.locals:
+                             offset, var_type = self.locals[size_var_name]
+                             self.output.append(f"    mov rax, [rbp - {offset}]")
+                         elif size_var_name in self.globals:
+                             global_info = self.globals[size_var_name]
+                             self.output.append(f"    mov rax, [rel {global_info['label']}]")
+                         self.output.append(f"    mov [rsp], rax")  # Store length at rsp (start of block)
+                         
+                         # Store as VLA type (with '[]' to indicate dynamic)
+                         self.locals[stmt.name] = (ptr_offset, element_type + '[]')
+                         
+                         # For VLAs, skip array literal initialization for now
+                         # (would need loop-based initialization)
+                         if isinstance(stmt.expr, ArrayLiteralExpr):
+                             # TODO: Implement VLA initialization from array literal
+                             pass
+                         elif isinstance(stmt.expr, LiteralExpr) and stmt.expr.value == 0:
+                             # Zero init - could call memset
+                             pass
+                     else:
+                         # Compile-time constant size
+                         # Add 8 bytes for length header
+                         total_size = resolved_array_size * element_size + 8
+                         # Align to 8 bytes
+                         aligned_size = ((total_size + 7) // 8) * 8
+                         self.next_local_offset += aligned_size
+                         self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
+                         
+                         # Calculate offsets
+                         # Block start: [rbp - self.next_local_offset]
+                         # Length header: [rbp - self.next_local_offset]
+                         # Data start: [rbp - self.next_local_offset + 8]
+                         
+                         # Store length
+                         length_loc = f"[rbp - {self.next_local_offset}]"
+                         self.output.append(f"    mov qword ptr {length_loc}, {resolved_array_size}")
+                         
+                         # Mark as array type in locals
+                         # Point locals to DATA start.
+                         # self.next_local_offset points to bottom of block. 
+                         # data_offset = self.next_local_offset - 8
+                         var_offset = self.next_local_offset - 8
+                         # Store full type with size for fixed-size arrays (e.g., int32[10])
+                         self.locals[stmt.name] = (var_offset, element_type + f'[{resolved_array_size}]')
+                         
+                         # Initialization
+                         if isinstance(stmt.expr, ArrayLiteralExpr):
+                             for i, val_expr in enumerate(stmt.expr.values):
+                                 if i >= resolved_array_size: break
+                                 
+                                 offset = i * element_size
+                                 # Values are generated; expected type matches element
                                  self.gen_expression(val_expr, expected_type=element_type)
                                  
-                                 self.output.append("    mov rsi, rax")
-                                 self.output.append(f"    lea rdi, {mem_loc}")
-                                 self.output.append(f"    mov rcx, {sz}")
-                                 self.output.append("    rep movsb")
-                             else:
+                                 # Store at [rbp - var_offset + offset]
+                                 # var_offset is data start (distance from rbp). 
+                                 # [rbp - var_offset] is data[0].
+                                 # [rbp - (var_offset - offset)] -> [rbp - var_offset + offset]
+                                 
+                                 mem_loc = f"[rbp - {var_offset - offset}]"
+                                 
+                                 if element_type == 'float32':
+                                     self.output.append(f"    movss {mem_loc}, xmm0")
+                                 elif element_type == 'float64':
+                                     self.output.append(f"    movsd {mem_loc}, xmm0")
+                                 elif element_type == 'int32':
+                                     self.output.append(f"    mov dword ptr {mem_loc}, eax")
+                                 elif element_type == 'int64' or element_type.endswith('*') or element_type == 'string':
+                                     self.output.append(f"    mov qword ptr {mem_loc}, rax")
+                                 elif element_type == 'char' or element_type == 'int8':
+                                     self.output.append(f"    mov byte ptr {mem_loc}, al")
+                                 elif element_type == 'int16':
+                                     self.output.append(f"    mov word ptr {mem_loc}, ax")
+                                 elif element_type in self.enums:
+                                     self.output.append(f"    mov qword ptr {mem_loc}, rax")
+                                 elif element_type in self.structs:
+                                     # Struct by value in array initialization
+                                     sz = self.get_struct_size(element_type)
+                                     # ...
+                                     self.gen_expression(val_expr, expected_type=element_type)
+                                     
+                                     self.output.append("    mov rsi, rax")
+                                     self.output.append(f"    lea rdi, {mem_loc}")
+                                     self.output.append(f"    mov rcx, {sz}")
+                                     self.output.append("    rep movsb")
+                                 else:
+                                     pass
+                             
+                             # TODO: Zero fill if values < size?
+                             if len(stmt.expr.values) < resolved_array_size and len(stmt.expr.values) > 0:
+                                 # Basic zero fill support
                                  pass
-                         
-                         # TODO: Zero fill if values < size?
-                         if len(stmt.expr.values) < stmt.array_size and len(stmt.expr.values) > 0:
-                             # Basic zero fill support
+                         elif isinstance(stmt.expr, LiteralExpr) and stmt.expr.value == 0:
+                             # Zero init whole array?
                              pass
-                     elif isinstance(stmt.expr, LiteralExpr) and stmt.expr.value == 0:
-                         # Zero init whole array?
-                         pass
-                     else:
-                        # Generic expression for array init (e.g. CallExpr returning an array pointer)
-                        actual_type = self.gen_expression(stmt.expr, expected_type=element_type + '[]')
-                        
-                        # Assume RAX points to data start of returned array.
-                        # Copy data to our local buffer.
-                        sz = stmt.array_size * element_size
-                        self.output.append("    mov rsi, rax")
-                        self.output.append(f"    lea rdi, [rbp - {var_offset}]")
-                        self.output.append(f"    mov rcx, {sz}")
-                        self.output.append("    rep movsb")
+                         else:
+                            # Generic expression for array init (e.g. CallExpr returning an array pointer)
+                            actual_type = self.gen_expression(stmt.expr, expected_type=element_type + '[]')
+                            
+                            # Assume RAX points to data start of returned array.
+                            # Copy data to our local buffer.
+                            sz = resolved_array_size * element_size
+                            self.output.append("    mov rsi, rax")
+                            self.output.append(f"    lea rdi, [rbp - {var_offset}]")
+                            self.output.append(f"    mov rcx, {sz}")
+                            self.output.append("    rep movsb")
 
                 else:
                     actual_type = self.gen_expression(stmt.expr, expected_type=None)
