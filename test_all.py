@@ -3,6 +3,7 @@ import subprocess
 import glob
 import sys
 import time
+import argparse
 
 # Colors for terminal output
 GREEN = "\033[92m"
@@ -44,7 +45,7 @@ def parse_expected_output(bcb_file):
     expected_str = "\n".join(expected) if expected else None
     return expected_str, expected_error, expected_pre
 
-def test_file(bcb_path, base_dir=""):
+def test_file(bcb_path, base_dir="", winlinux=False):
     display_name = os.path.relpath(bcb_path, base_dir) if base_dir else os.path.basename(bcb_path)
     filename = os.path.basename(bcb_path)
     base_name = os.path.splitext(filename)[0]
@@ -107,7 +108,11 @@ def test_file(bcb_path, base_dir=""):
             return False
 
     # 2. Assemble and Link with GCC
-    stdout, stderr, code = run_command(["gcc", asm_path, "-o", exe_path])
+    if winlinux:
+        gcc_cmd = ["x86_64-w64-mingw32-gcc", asm_path, "-o", exe_path]
+    else:
+        gcc_cmd = ["gcc", asm_path, "-o", exe_path]
+    stdout, stderr, code = run_command(gcc_cmd)
     if code != 0:
         print(f"[{RED}FAILED{RESET}] (Linking)")
         print(f"  Error: {stderr or stdout}")
@@ -115,9 +120,11 @@ def test_file(bcb_path, base_dir=""):
         return False
     
     # 3. Execute
-    # On Windows, we just run the exe. subprocess.run handles the path.
     exe_abs = os.path.abspath(exe_path)
-    stdout, stderr, code = run_command([exe_abs])
+    if winlinux:
+        stdout, stderr, code = run_command(["wine", exe_abs])
+    else:
+        stdout, stderr, code = run_command([exe_abs])
     duration = time.time() - start_time
     
     # 4. Cleanup
@@ -145,11 +152,19 @@ def test_file(bcb_path, base_dir=""):
         return True
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="BCB Compiler Functional Tests")
+    parser.add_argument("--winlinux", "-wl", action="store_true",
+                        help="Compile for Windows using mingw64-gcc and run with wine")
+    args = parser.parse_args()
+    
     # Ensure bcb is in path if not installed
     sys.path.append(os.getcwd())
 
-    # Select example directory based on host OS
-    if sys.platform.startswith("win"):
+    # Select example directory based on host OS or winlinux mode
+    if args.winlinux:
+        examples_dir = "ex_windows"
+    elif sys.platform.startswith("win"):
         examples_dir = "ex_windows"
     elif sys.platform.startswith("linux"):
         examples_dir = "ex_linux"
@@ -183,7 +198,7 @@ def main():
     total = len(test_files)
     
     for bcb_file in test_files:
-        if test_file(bcb_file, examples_dir):
+        if test_file(bcb_file, examples_dir, winlinux=args.winlinux):
             passed += 1
             
     print("=" * 50)
