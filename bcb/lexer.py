@@ -16,7 +16,8 @@ KEYWORDS = {
     '$while', '$endwhile', 'md',
     'jmp', 'ifn', 'cmp_t',
     'struct', 'enum', 'import',
-    'push', 'pop', 'swap', 'dup', 'no_value', 'pub', 'macro'
+    'push', 'pop', 'swap', 'dup', 'no_value', 'pub', 'macro',
+    'add_i', 'rem_i'
 }
 
 TOKEN_SPEC = [

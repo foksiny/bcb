@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr, AddIndexStmt, RemoveIndexStmt
 
 class CodeGen:
     def __init__(self, ast, optimization_level: int = 3):
@@ -436,7 +436,7 @@ class CodeGen:
         self.current_function = func
         self.locals = {}
         # Count non-volatile registers to save
-        pushed_count = 1 # rbx is always saved
+        pushed_count = 3 # rbx, r12, r13 are always saved
         if not self.is_linux:
             pushed_count += 2 # rsi, rdi on Windows
         
@@ -457,6 +457,8 @@ class CodeGen:
             self.output.append("    push rsi")
             self.output.append("    push rdi")
         self.output.append("    push rbx")
+        self.output.append("    push r12")
+        self.output.append("    push r13")
         
         # Placeholder for stack allocation
         sub_rsp_idx = len(self.output)
@@ -599,6 +601,8 @@ class CodeGen:
             self.output.append(f"    add rsp, {stack_size}")
             
         # Restore non-volatile registers
+        self.output.append("    pop r13")
+        self.output.append("    pop r12")
         self.output.append("    pop rbx")
         if not self.is_linux:
             self.output.append("    pop rdi")
@@ -642,7 +646,79 @@ class CodeGen:
                 if isinstance(stmt.expr, StructLiteralExpr):
                     self.gen_struct_init(stmt.name, stmt.type_name, stmt.expr)
             else:
-                if stmt.is_array:
+                # Check if this is a dynamic array:
+                # - is_array=True but array_size=None (e.g., int32 x[] = {...})
+                # - OR type_name ends with '[]' (e.g., int32[] x = {...})
+                is_dynamic_array = (stmt.is_array and stmt.array_size is None) or stmt.type_name.endswith('[]')
+                
+                # Extract element type if type_name ends with []
+                if stmt.type_name.endswith('[]'):
+                    element_type_from_type = stmt.type_name[:-2]
+                else:
+                    element_type_from_type = None
+                
+                if is_dynamic_array:
+                    # Dynamic array - allocate on heap
+                    # Use element_type_from_type if available, otherwise use stmt.type_name
+                    element_type = element_type_from_type if element_type_from_type else stmt.type_name
+                    element_size = self.get_type_size(element_type)
+                    
+                    # Allocate space for pointer (8 bytes)
+                    self.next_local_offset += 8
+                    self.max_local_offset = max(self.max_local_offset, self.next_local_offset)
+                    ptr_offset = self.next_local_offset
+                    
+                    # Initialize as NULL or with initial values
+                    if isinstance(stmt.expr, ArrayLiteralExpr) and stmt.expr.values:
+                        # Allocate with initial values
+                        num_elements = len(stmt.expr.values)
+                        total_size = num_elements * element_size + 8  # +8 for length header
+                        
+                        # malloc(total_size) - use correct calling convention
+                        if self.is_windows:
+                            self.output.append(f"    mov rcx, {total_size}")
+                        else:
+                            self.output.append(f"    mov rdi, {total_size}")
+                        self.output.append("    call malloc")
+                        
+                        # Store length
+                        self.output.append(f"    mov qword ptr [rax], {num_elements}")
+                        
+                        # Store pointer (pointing to data start, after length)
+                        self.output.append(f"    lea rcx, [rax + 8]")
+                        self.output.append(f"    mov [rbp - {ptr_offset}], rcx")
+                        
+                        # Initialize elements
+                        for i, val_expr in enumerate(stmt.expr.values):
+                            self.gen_expression(val_expr, expected_type=element_type)
+                            
+                            # Calculate offset: [pointer + i * element_size]
+                            offset_bytes = i * element_size
+                            
+                            if element_type == 'float32':
+                                self.output.append(f"    movss [rcx + {offset_bytes}], xmm0")
+                            elif element_type == 'float64':
+                                self.output.append(f"    movsd [rcx + {offset_bytes}], xmm0")
+                            elif element_type == 'int32':
+                                self.output.append(f"    mov dword ptr [rcx + {offset_bytes}], eax")
+                            elif element_type == 'int64' or element_type == 'string' or element_type.endswith('*'):
+                                self.output.append(f"    mov qword ptr [rcx + {offset_bytes}], rax")
+                            elif element_type == 'char' or element_type == 'int8':
+                                self.output.append(f"    mov byte ptr [rcx + {offset_bytes}], al")
+                            elif element_type == 'int16':
+                                self.output.append(f"    mov word ptr [rcx + {offset_bytes}], ax")
+                            else:
+                                self.output.append(f"    mov qword ptr [rcx + {offset_bytes}], rax")
+                    else:
+                        # Evaluate the expression and store the result
+                        # This handles cases like: int32[] arr = int32[](myargs(0));
+                        actual_type = self.gen_expression(stmt.expr, expected_type=element_type + '[]')
+                        self.output.append(f"    mov [rbp - {ptr_offset}], rax")
+                    
+                    # Store as dynamic array type
+                    self.locals[stmt.name] = (ptr_offset, element_type + '[]')
+                    
+                elif stmt.is_array:
                      # Array Declaration
                      element_type = stmt.type_name
                      element_size = self.get_type_size(element_type)
@@ -1143,6 +1219,127 @@ class CodeGen:
             # Since our stack implementation uses 8-byte slots, we just copy the top 8 bytes.
             self.output.append("    mov rax, [rsp]")
             self.output.append("    push rax")
+        
+        elif isinstance(stmt, AddIndexStmt):
+            # Add an index to a dynamic array (realloc)
+            # Dynamic arrays are stored as: [length (8 bytes)][data...]
+            # The variable holds a pointer to the structure
+            
+            if stmt.arr_name in self.locals:
+                offset, arr_type = self.locals[stmt.arr_name]
+                
+                # Get the base type (e.g., "int32" from "int32[]")
+                if arr_type.endswith('[]'):
+                    base_type = arr_type[:-2]
+                else:
+                    base_type = 'int64'  # fallback
+                
+                element_size = self.get_type_size(base_type)
+                
+                # Load the array pointer into r12 (callee-saved, preserved across calls)
+                self.output.append(f"    mov r12, [rbp - {offset}]")
+                
+                # Check if array is NULL (not yet allocated)
+                alloc_label = self.new_label("dyn_alloc")
+                continue_label = self.new_label("dyn_continue")
+                
+                self.output.append("    test r12, r12")
+                self.output.append(f"    jz {alloc_label}")
+                
+                # Array exists - get current length and realloc
+                # Length is stored at [pointer - 8] (before the data)
+                self.output.append("    mov rax, [r12 - 8]")  # Get current length
+                self.output.append("    inc rax")  # New length
+                self.output.append("    mov r13, rax")  # Save new length in r13 (callee-saved)
+                self.output.append(f"    imul rax, {element_size}")  # Calculate data size
+                self.output.append("    add rax, 8")  # Add space for length header
+                
+                # realloc(ptr - 8, new_total_size) - use correct calling convention
+                if self.is_windows:
+                    self.output.append("    lea rcx, [r12 - 8]")  # Point to start of allocation
+                    self.output.append("    mov rdx, rax")  # New size
+                else:
+                    self.output.append("    lea rdi, [r12 - 8]")  # Point to start of allocation
+                    self.output.append("    mov rsi, rax")  # New size
+                self.output.append("    call realloc")
+                
+                # Store new length and update pointer
+                self.output.append("    mov [rax], r13")  # Store new length
+                self.output.append("    lea rax, [rax + 8]")  # Point to data start
+                self.output.append(f"    mov [rbp - {offset}], rax")  # Update variable
+                self.output.append(f"    jmp {continue_label}")
+                
+                # Array is NULL - allocate new array with 1 element
+                self.output.append(f"{alloc_label}:")
+                # malloc(size) - use correct calling convention
+                if self.is_windows:
+                    self.output.append(f"    mov rcx, {element_size + 8}")  # Size for 1 element + length
+                else:
+                    self.output.append(f"    mov rdi, {element_size + 8}")  # Size for 1 element + length
+                self.output.append("    call malloc")
+                self.output.append("    mov qword ptr [rax], 1")  # Length = 1
+                self.output.append("    lea rax, [rax + 8]")  # Point to data start
+                self.output.append(f"    mov [rbp - {offset}], rax")  # Update variable
+                # Zero-initialize the new element
+                self.output.append(f"    mov qword ptr [rax], 0")
+                
+                self.output.append(f"{continue_label}:")
+        
+        elif isinstance(stmt, RemoveIndexStmt):
+            # Remove an index from a dynamic array
+            if stmt.arr_name in self.locals:
+                offset, arr_type = self.locals[stmt.arr_name]
+                
+                # Get the base type
+                if arr_type.endswith('[]'):
+                    base_type = arr_type[:-2]
+                else:
+                    base_type = 'int64'
+                
+                element_size = self.get_type_size(base_type)
+                
+                # Load the array pointer into rbx (temp register)
+                self.output.append(f"    mov rbx, [rbp - {offset}]")
+                
+                # Check if array is NULL or has 0 elements
+                skip_label = self.new_label("dyn_skip_rem")
+                
+                self.output.append("    test rbx, rbx")
+                self.output.append(f"    jz {skip_label}")
+                
+                # Get current length
+                self.output.append("    mov rax, [rbx - 8]")  # Get current length
+                self.output.append("    cmp rax, 0")
+                self.output.append(f"    jle {skip_label}")
+                
+                # Decrement length
+                self.output.append("    dec rax")
+                self.output.append("    mov [rbx - 8], rax")  # Store new length
+                
+                # If length is now 0, free the array
+                free_label = self.new_label("dyn_free")
+                done_label = self.new_label("dyn_rem_done")
+                
+                self.output.append("    test rax, rax")
+                self.output.append(f"    jz {free_label}")
+                
+                # Shrink the allocation (optional optimization - we can skip for simplicity)
+                # For now, just keep the allocation but reduce the logical size
+                self.output.append(f"    jmp {done_label}")
+                
+                # Free the array if length is 0
+                self.output.append(f"{free_label}:")
+                # free(ptr) - use correct calling convention
+                if self.is_windows:
+                    self.output.append("    lea rcx, [rbx - 8]")  # Point to start of allocation
+                else:
+                    self.output.append("    lea rdi, [rbx - 8]")  # Point to start of allocation
+                self.output.append("    call free")
+                self.output.append(f"    mov qword ptr [rbp - {offset}], 0")  # Set pointer to NULL
+                
+                self.output.append(f"{done_label}:")
+                self.output.append(f"{skip_label}:")
+        
     def gen_if_stmt(self, stmt):
         end_label = self.new_label("if_end")
         

@@ -244,6 +244,18 @@ class NoValueExpr(ASTNode):
     def __init__(self, line=0, column=0, source_file=None):
         super().__init__(line, column, source_file)
 
+class AddIndexStmt(ASTNode):
+    """Add an index to a dynamic array (add_i array_name;)"""
+    def __init__(self, arr_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+        self.arr_name = arr_name
+
+class RemoveIndexStmt(ASTNode):
+    """Remove an index from a dynamic array (rem_i array_name;)"""
+    def __init__(self, arr_name, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+        self.arr_name = arr_name
+
 class Attribute(ASTNode):
     """Represents an attribute like #NoWarning("unused function") or #SonOf(math)"""
     def __init__(self, name, args, line=0, column=0, source_file=None):
@@ -856,6 +868,16 @@ class Parser:
                 type_name = self.parse_type()
                 self.consume(TokenType.SYMBOL, ';')
                 return DupStmt(type_name, token.line, token.column, self.source_file)
+            elif token.value == 'add_i':
+                self.consume()
+                arr_name = self.consume(TokenType.IDENTIFIER).value
+                self.consume(TokenType.SYMBOL, ';')
+                return AddIndexStmt(arr_name, token.line, token.column, self.source_file)
+            elif token.value == 'rem_i':
+                self.consume()
+                arr_name = self.consume(TokenType.IDENTIFIER).value
+                self.consume(TokenType.SYMBOL, ';')
+                return RemoveIndexStmt(arr_name, token.line, token.column, self.source_file)
             elif token.value in ['int8', 'int16', 'int32', 'int64', 'float32', 'float64', 'string', 'char']:
                 # Variable declaration
                 type_name = self.parse_type()

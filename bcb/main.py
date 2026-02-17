@@ -5,7 +5,7 @@ from bcb.lexer import tokenize
 from bcb.parser import Parser
 from bcb.codegen import CodeGen
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 VERSION_STRING = f"BCB Compiler {VERSION} Final Release"
 
 HELP_TEXT = f"""

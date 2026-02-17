@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.6**
+**Version 1.0.7**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -20,6 +20,7 @@
 7. [The Semantic Analyzer & Diagnostics](#the-semantic-analyzer--diagnostics)
 8. [The Mutation System (md)](#the-mutation-system-md)
 9. [Data & Memory Structures (Structs, Enums, Arrays)](#data--memory-structures)
+    - [Dynamic Arrays](#dynamic-arrays-heap-allocated-resizable-arrays)
 10. [Structured Control Flow ($)](#structured-control-flow-)
 11. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
 12. [Advanced Math & Logic](#advanced-math--logic)
@@ -569,6 +570,79 @@ BCB allows you to nest structs within arrays for complex data handling:
 MyStruct list[2] = { {x: 1, y: 2}, {x: 3, y: 4} };
 int32 val = list[0].x; // Accessing field of array element
 ```
+
+### Dynamic Arrays: Heap-Allocated Resizable Arrays
+BCB supports fully dynamic arrays that can grow and shrink at runtime. Unlike fixed-size arrays, dynamic arrays are allocated on the heap and can be resized dynamically.
+
+**Declaration & Initialization:**
+```bcb
+// Declare a dynamic array (starts with 1 element initialized to 0)
+int32[] my_list = {0};
+
+// Initialize with multiple values
+int32[] numbers = {10, 20, 30};
+```
+
+**Key Features:**
+- **Heap Allocation**: Dynamic arrays use `malloc`/`realloc` for memory management
+- **Length Header**: The length is stored in a hidden 8-byte header before the data
+- **Automatic Growth**: Arrays grow automatically when you add elements
+- **Any Type Support**: Dynamic arrays work with all types: `int32[]`, `int64[]`, `float64[]`, `string[]`, struct types, etc.
+
+**Dynamic Array Operations:**
+
+| Operation | Syntax | Description |
+| :--- | :--- | :--- |
+| **Add Index** | `add_i arr;` | Adds a new element to the end, increasing length by 1 |
+| **Remove Index** | `rem_i arr;` | Removes the last element, decreasing length by 1 |
+| **Get Length** | `length(arr)` | Returns the current number of elements |
+
+**Example:**
+```bcb
+<outtype: linux64>
+
+data {
+    string fmt : "%d\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    // Start with 1 element (value = 0)
+    int32[] my_list = {0};
+    
+    // Add a new index (now has 2 elements)
+    add_i my_list;
+    
+    // Set the new element at index 1
+    md int32 my_list[1] = 10;
+    
+    // Print length (outputs: 2)
+    call printf(string fmt, int32 length(my_list));
+    
+    // Get the last element (outputs: 10)
+    int32 value = my_list[length(my_list) - 1];
+    call printf(string fmt, int32 value);
+    
+    // Remove index 1 (back to 1 element)
+    rem_i my_list;
+    
+    // Print new length (outputs: 1)
+    call printf(string fmt, int32 length(my_list));
+    
+    return int32 0;
+}
+```
+
+**Memory Management:**
+- Dynamic arrays are automatically freed when they become empty (length reaches 0 after `rem_i`)
+- The `add_i` operation uses `realloc` to efficiently resize the array
+- Initial allocation happens on first `add_i` if starting from NULL
+
+**Important Notes:**
+- Dynamic arrays use `type[]` syntax (empty brackets) vs fixed arrays `type[n]`
+- Accessing out-of-bounds indices is undefined behavior
+- Use `length()` to check the current size before accessing elements
 
 ---
 

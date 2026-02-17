@@ -1,5 +1,5 @@
 from .parser import *
-from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, FieldAssignStmt
+from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, FieldAssignStmt, AddIndexStmt, RemoveIndexStmt
 from .errors import DiagnosticLevel
 
 class SemanticAnalyzer:
@@ -476,6 +476,26 @@ class SemanticAnalyzer:
             
             if not self.is_type_compatible(stmt.type_name, top_type):
                  self.warning(f"Dup type '{stmt.type_name}' does not match stack top type '{top_type}'", stmt)
+        
+        elif isinstance(stmt, AddIndexStmt):
+            # Add index to dynamic array
+            var_type = self.lookup(stmt.arr_name)
+            if not var_type:
+                self.error(f"Undefined variable '{stmt.arr_name}'", stmt)
+                return
+            # Check if it's a dynamic array (ends with [])
+            if not isinstance(var_type, str) or not var_type.endswith('[]'):
+                self.error(f"Cannot add index to non-dynamic array '{stmt.arr_name}' (type: {var_type})", stmt)
+        
+        elif isinstance(stmt, RemoveIndexStmt):
+            # Remove index from dynamic array
+            var_type = self.lookup(stmt.arr_name)
+            if not var_type:
+                self.error(f"Undefined variable '{stmt.arr_name}'", stmt)
+                return
+            # Check if it's a dynamic array (ends with [])
+            if not isinstance(var_type, str) or not var_type.endswith('[]'):
+                self.error(f"Cannot remove index from non-dynamic array '{stmt.arr_name}' (type: {var_type})", stmt)
 
     def analyze_lvalue(self, name, node):
         # Handle dotted name (struct field access or SonOf variable)

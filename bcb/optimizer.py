@@ -390,7 +390,7 @@ class ASTOptimizer:
             stmt.expr = self._optimize_expr(stmt.expr)
             return stmt
             
-        elif isinstance(stmt, (LabelDef, JmpStmt, PopStmt)):
+        elif isinstance(stmt, (LabelDef, JmpStmt, PopStmt, AddIndexStmt, RemoveIndexStmt)):
             return stmt
             
         return stmt

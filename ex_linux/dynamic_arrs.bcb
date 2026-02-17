@@ -1,0 +1,28 @@
+<outtype: linux64>
+// EXPECT: 2\n10\n1\n
+
+data {
+    string fmt : "%d\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    int32[] my_list = {0}; // this will start with only 1 element, which have a value of 0 (also, dynamic lists can have any types, including but not limited to int32, int64, structs, enums, int8, string, etc.)
+
+    add_i my_list; // add another index, making the size also increase by one
+
+    md int32 my_list[1] = 10; // this will work because it now have the index 1 and not only index 0
+
+    call printf(string fmt, int32 length(my_list)); // prints 2
+
+    int32 value = my_list[length(my_list) - 1]; // gets 10
+
+    call printf(string fmt, int32 value);
+
+    rem_i my_list; // remove index 1 and also its value from the memory, making the size get back to 1 and the index be only 0 and not 0 and 1
+
+    call printf(string fmt, int32 length(my_list)); // prints 1
+
+    return int32 0;
+}
