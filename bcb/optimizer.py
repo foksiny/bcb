@@ -500,6 +500,10 @@ class ASTOptimizer:
                 self.changed = True
                 return LiteralExpr(type_name, expr.line, expr.column)
             return expr
+
+        elif isinstance(expr, HereExpr):
+            # here() is a compile-time constant - no optimization needed
+            return expr
             
         return expr
     

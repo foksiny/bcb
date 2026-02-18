@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.7**
+**Version 1.0.8**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -27,6 +27,7 @@
 13. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
 14. [Runtime Type Information & Variadic Arguments](#runtime-type-information--variadic-arguments)
     - [The gettype() Function](#the-gettype-function)
+    - [The here() Built-in Macro](#the-here-built-in-macro)
     - [Variadic Functions with ...args](#variadic-functions-with-args)
     - [myargs.amount - Argument Count](#myargsamount---argument-count)
     - [myargs(index) - Accessing Arguments by Index](#myargsindex---accessing-arguments-by-index)
@@ -802,6 +803,42 @@ export main() -> int32 {
     return int32 0;
 }
 ```
+
+### The `here()` Built-in Macro
+
+`here()` is a built-in macro that returns the current source location as a string in the format `filename:line:column`. This is useful for debugging, logging, and error messages.
+
+**Syntax:**
+```bcb
+string location = here();
+```
+
+**Return Value:**
+Returns a string in the format `filename:line:column` where:
+- `filename` is the basename of the source file
+- `line` is the line number where `here()` is called
+- `column` is the column number where `here()` starts
+
+**Example:**
+```bcb
+data {
+    string fmt : "%s\n"
+}
+
+define printf(fmt: string, all: ...args) -> int32;
+
+export main(void) -> int32 {
+    // Prints something like: "main.bcb:10:35"
+    call printf(string fmt, string here());
+    
+    return int32 0;
+}
+```
+
+**Use Cases:**
+- **Debug Logging**: Quickly identify where in the code a message originates
+- **Error Messages**: Include source location in error output
+- **Tracing**: Track execution flow through the program
 
 ### Variadic Functions with `...args`
 

@@ -5,7 +5,7 @@ from bcb.lexer import tokenize
 from bcb.parser import Parser
 from bcb.codegen import CodeGen
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 VERSION_STRING = f"BCB Compiler {VERSION} Final Release"
 
 HELP_TEXT = f"""
@@ -100,7 +100,7 @@ def main():
         
         abs_input = os.path.abspath(input_file)
         tokens = tokenize(code)
-        parser = Parser(tokens, os.path.dirname(abs_input), {abs_input})
+        parser = Parser(tokens, os.path.dirname(abs_input), {abs_input}, abs_input)
         ast = parser.parse()
         
         # Diagnostics and Analysis

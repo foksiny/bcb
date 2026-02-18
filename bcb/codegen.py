@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr, AddIndexStmt, RemoveIndexStmt
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr, AddIndexStmt, RemoveIndexStmt, HereExpr
 
 class CodeGen:
     def __init__(self, ast, optimization_level: int = 3):
@@ -1907,14 +1907,14 @@ class CodeGen:
 
         elif isinstance(expr, GetTypeExpr):
              if isinstance(expr.expr, ArgsAccessExpr):
-                 # Runtime type tag lookup for variadic arguments
-                 self.gen_expression(expr.expr.index, expected_type='int32')
-                 pname = expr.expr.name
-                 if f"__types_{pname}" in self.locals:
-                      off, _ = self.locals[f"__types_{pname}"]
-                      self.output.append(f"    mov rcx, [rbp - {off}]")
-                      self.output.append("    mov rax, [rcx + rax*8]")
-                      return "string"
+                  # Runtime type tag lookup for variadic arguments
+                  self.gen_expression(expr.expr.index, expected_type='int32')
+                  pname = expr.expr.name
+                  if f"__types_{pname}" in self.locals:
+                       off, _ = self.locals[f"__types_{pname}"]
+                       self.output.append(f"    mov rcx, [rbp - {off}]")
+                       self.output.append("    mov rax, [rcx + rax*8]")
+                       return "string"
              
              # Inferred type name was stored by analyzer for static cases
              type_name = getattr(expr, 'inferred_type_name', 'unknown')
@@ -1924,6 +1924,24 @@ class CodeGen:
                  self.string_literals[type_name] = label
              else:
                  label = self.string_literals[type_name]
+             
+             self.output.append(f"    lea rax, [rip + {label}]")
+             return "string"
+
+        elif isinstance(expr, HereExpr):
+             # Built-in macro that returns current source location as string
+             # Format: file:line:column
+             source_file = expr.source_file if expr.source_file else "<unknown>"
+             # Use just the filename (basename) for cleaner output
+             import os
+             filename = os.path.basename(source_file) if source_file != "<unknown>" else source_file
+             location_str = f"{filename}:{expr.line}:{expr.column}"
+             
+             if location_str not in self.string_literals:
+                 label = self.new_label("here_loc")
+                 self.string_literals[location_str] = label
+             else:
+                 label = self.string_literals[location_str]
              
              self.output.append(f"    lea rax, [rip + {label}]")
              return "string"

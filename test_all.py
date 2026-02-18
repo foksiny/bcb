@@ -29,17 +29,26 @@ def parse_expected_output(bcb_file):
     expected_error = []
     expected_pre = []
     
+    # Get the basename of the file for <file_path> substitution
+    file_basename = os.path.basename(bcb_file)
+    
     with open(bcb_file, 'r') as f:
         for line in f:
             if "// EXPECT:" in line:
                 # Replace literal \n with actual newline character
                 part = line.split("// EXPECT:")[1].strip()
+                # Replace <file_path> with the actual file basename
+                part = part.replace("<file_path>", file_basename)
                 expected.append(part.replace("\\n", "\n"))
             elif "// EXPECT_ERROR:" in line:
                 part = line.split("// EXPECT_ERROR:")[1].strip()
+                # Replace <file_path> with the actual file basename
+                part = part.replace("<file_path>", file_basename)
                 expected_error.append(part)
             elif "// EXPECT_PRE:" in line:
                 part = line.split("// EXPECT_PRE:")[1].strip()
+                # Replace <file_path> with the actual file basename
+                part = part.replace("<file_path>", file_basename)
                 expected_pre.append(part)
                 
     expected_str = "\n".join(expected) if expected else None

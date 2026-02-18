@@ -256,6 +256,11 @@ class RemoveIndexStmt(ASTNode):
         super().__init__(line, column, source_file)
         self.arr_name = arr_name
 
+class HereExpr(ASTNode):
+    """Built-in macro that returns the current source location as a string (file:line:column)"""
+    def __init__(self, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+
 class Attribute(ASTNode):
     """Represents an attribute like #NoWarning("unused function") or #SonOf(math)"""
     def __init__(self, name, args, line=0, column=0, source_file=None):
@@ -1093,6 +1098,12 @@ class Parser:
             expr = self.parse_expression()
             self.consume(TokenType.SYMBOL, ')')
             return GetTypeExpr(expr, token.line, token.column, self.source_file)
+        elif token.type == TokenType.IDENTIFIER and token.value == 'here':
+            # Built-in macro that returns current source location
+            start_token = self.consume() # here
+            self.consume(TokenType.SYMBOL, '(')
+            self.consume(TokenType.SYMBOL, ')')
+            return HereExpr(start_token.line, start_token.column, self.source_file)
         elif token.type == TokenType.KEYWORD and token.value == 'call':
             self.consume()  # call
             name = self.consume(TokenType.IDENTIFIER).value

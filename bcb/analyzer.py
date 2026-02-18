@@ -1,5 +1,5 @@
 from .parser import *
-from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, FieldAssignStmt, AddIndexStmt, RemoveIndexStmt
+from .parser import NoValueExpr, LengthExpr, GetTypeExpr, ArgsAccessExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, FieldAssignStmt, AddIndexStmt, RemoveIndexStmt, HereExpr
 from .errors import DiagnosticLevel
 
 class SemanticAnalyzer:
@@ -641,6 +641,10 @@ class SemanticAnalyzer:
              t = self.analyze_expr(expr.expr)
              # Store the inferred type name in the node for codegen/optimization
              expr.inferred_type_name = t
+             return "string"
+
+        elif isinstance(expr, HereExpr):
+             # Built-in macro that returns current source location as string
              return "string"
 
         elif isinstance(expr, ArrayAccessExpr):
