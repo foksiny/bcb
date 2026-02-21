@@ -1,0 +1,13 @@
+<outtype: linux64>
+// EXPECT: 30\n
+
+import "lib.asm" asmf; // asmf stands for assembly file
+
+define printf(fmt: string, all: ...args) -> int32;
+define sum(a: int32, b: int32) -> int32;
+
+export main(void) -> int32 {
+    int32 r = call sum(int32 10, int32 20);
+    call printf(string "%d\n", int32 r);
+    return int32 0;
+}

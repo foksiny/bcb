@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="bcb",
-    version="1.0.8",
+    version="1.0.9",
     author="Antigravity",
     description="A minimalist compiler for BCB (Basic Compiler Backend) language",
     packages=find_packages(),

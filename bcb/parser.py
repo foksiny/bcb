@@ -66,6 +66,13 @@ class GlobalVarDecl(ASTNode):
         self.array_size = array_size
         self.attributes = attributes or []  # List of Attribute nodes
 
+class AsmImport(ASTNode):
+    """Represents an imported assembly file."""
+    def __init__(self, path, asm_code, line=0, column=0, source_file=None):
+        super().__init__(line, column, source_file)
+        self.path = path  # Original import path
+        self.asm_code = asm_code  # Raw assembly code from the file
+
 class CallExpr(ASTNode):
     def __init__(self, name, args, line=0, column=0, source_file=None):
         super().__init__(line, column, source_file)
@@ -420,6 +427,13 @@ class Parser:
                 elif token.value == 'import':
                     self.consume() # import
                     import_path = self.consume(TokenType.STRING).value
+                    
+                    # Check for 'asmf' marker for assembly file imports
+                    is_asm_import = False
+                    if self.peek().type == TokenType.IDENTIFIER and self.peek().value == 'asmf':
+                        self.consume()  # asmf
+                        is_asm_import = True
+                    
                     self.consume(TokenType.SYMBOL, ';')
                     
                     full_path = os.path.abspath(os.path.join(self.base_dir, import_path))
@@ -428,27 +442,34 @@ class Parser:
                         if os.path.exists(full_path):
                             with open(full_path, 'r') as f:
                                 import_code = f.read()
-                            import_tokens = tokenize(import_code)
-                            import_parser = Parser(import_tokens, os.path.dirname(full_path), self.imported_files, full_path)
-                            import_program = import_parser.parse()
                             
-                            # Merge declarations
-                            declarations.extend(import_program.declarations)
-                            
-                            # Merge data block
-                            if import_program.data_block:
-                                if not data_block:
-                                    data_block = DataBlock([], [], [])
-                                data_block.entries.extend(import_program.data_block.entries)
-                                data_block.structs.extend(import_program.data_block.structs)
-                                data_block.enums.extend(import_program.data_block.enums)
-                                # Also update enum_names from the imported parser
-                                self.enum_names.update(import_parser.enum_names)
-                                self.macros.update(import_parser.macros)
-                            
-                            # Merge outtype if not already set
-                            if not outtype:
-                                outtype = import_program.outtype
+                            # Handle assembly file imports
+                            if is_asm_import or import_path.endswith('.s'):
+                                asm_import = AsmImport(import_path, import_code, token.line, token.column, self.source_file)
+                                declarations.append(asm_import)
+                            else:
+                                # Regular BCB file import
+                                import_tokens = tokenize(import_code)
+                                import_parser = Parser(import_tokens, os.path.dirname(full_path), self.imported_files, full_path)
+                                import_program = import_parser.parse()
+                                
+                                # Merge declarations
+                                declarations.extend(import_program.declarations)
+                                
+                                # Merge data block
+                                if import_program.data_block:
+                                    if not data_block:
+                                        data_block = DataBlock([], [], [])
+                                    data_block.entries.extend(import_program.data_block.entries)
+                                    data_block.structs.extend(import_program.data_block.structs)
+                                    data_block.enums.extend(import_program.data_block.enums)
+                                    # Also update enum_names from the imported parser
+                                    self.enum_names.update(import_parser.enum_names)
+                                    self.macros.update(import_parser.macros)
+                                
+                                # Merge outtype if not already set
+                                if not outtype:
+                                    outtype = import_program.outtype
                         else:
                             raise RuntimeError(f"Imported file not found: {full_path}")
                 else:

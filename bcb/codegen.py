@@ -1,4 +1,4 @@
-from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr, AddIndexStmt, RemoveIndexStmt, HereExpr
+from .parser import Program, DataBlock, FunctionDecl, FunctionDef, GlobalVarDecl, CallExpr, ReturnStmt, VarDeclStmt, VarAssignStmt, BinaryExpr, LiteralExpr, VarRefExpr, IfStmt, WhileStmt, LabelDef, JmpStmt, IfnStmt, CmpTStmt, TypeCastExpr, UnaryExpr, StructDef, StructLiteralExpr, FieldAccessExpr, FieldAssignStmt, EnumDef, EnumValueExpr, PushStmt, PopStmt, SwapStmt, DupStmt, NoValueExpr, ArrayAccessExpr, ArrayLiteralExpr, ArrayAssignStmt, LengthExpr, GetTypeExpr, ArgsAccessExpr, AddIndexStmt, RemoveIndexStmt, HereExpr, AsmImport
 
 class CodeGen:
     def __init__(self, ast, optimization_level: int = 3):
@@ -226,6 +226,24 @@ class CodeGen:
             
         # Output the text section
         self.output.append(".text")
+        
+        # Output imported assembly files
+        for decl in self.ast.declarations:
+            if isinstance(decl, AsmImport):
+                # Add a comment indicating the source of the imported assembly
+                self.output.append(f"# Imported from {decl.path}")
+                # Strip leading .intel_syntax if present (we already emit it)
+                asm_lines = decl.asm_code.splitlines()
+                filtered_lines = []
+                for line in asm_lines:
+                    stripped = line.strip()
+                    # Skip .intel_syntax directive as we already emit it
+                    if stripped.startswith('.intel_syntax'):
+                        continue
+                    filtered_lines.append(line)
+                self.output.extend(filtered_lines)
+                self.output.append("")  # Empty line after imported code
+        
         self.output.extend(functions_output)
 
         # On Linux, emit a non-executable stack note to silence linker warnings

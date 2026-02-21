@@ -1,5 +1,5 @@
 # 🛠️ BCB: Basic Compiler Backend
-**Version 1.0.8**
+**Version 1.0.9**
 
 **"The Definitive Guide to High-Performance Low-Level Programming"**
 
@@ -25,6 +25,8 @@
 11. [Assembly-Level Control Flow (@)](#assembly-level-control-flow-)
 12. [Advanced Math & Logic](#advanced-math--logic)
 13. [C Interopterability & Custom Functions](#c-interopterability--custom-functions)
+    - [Importing BCB Modules](#importing-bcb-modules)
+    - [Importing Assembly Files](#importing-assembly-files)
 14. [Runtime Type Information & Variadic Arguments](#runtime-type-information--variadic-arguments)
     - [The gettype() Function](#the-gettype-function)
     - [The here() Built-in Macro](#the-here-built-in-macro)
@@ -759,6 +761,95 @@ export main(void) -> int32 {
     return int32 result;
 }
 ```
+
+### Importing BCB Modules
+BCB supports importing other `.bcb` files as modules, allowing you to organize code across multiple files.
+
+**Syntax:**
+```bcb
+import "path/to/module.bcb";
+```
+
+**Example:**
+```bcb
+// math.bcb
+add(a: int32, b: int32) -> int32 {
+    return int32 a + b;
+}
+```
+
+```bcb
+// main.bcb
+<outtype: linux64>
+import "math.bcb";
+
+export main(void) -> int32 {
+    int32 result = call add(int32 5, int32 3);
+    return int32 result;
+}
+```
+
+When importing a BCB file:
+- All functions, structs, enums, and data entries are merged into the current program
+- The imported file is only processed once (preventing duplicate imports)
+- Relative paths are resolved from the importing file's directory
+
+### Importing Assembly Files
+BCB can import raw assembly (`.s`) files, allowing you to integrate hand-written assembly code with BCB programs.
+
+**Syntax:**
+```bcb
+import "path/to/file.s" asmf;
+```
+
+The `asmf` marker indicates that the file is an assembly file (not a BCB module).
+
+**Example:**
+```bcb
+// lib.s - Hand-written assembly function
+sum:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 24
+    mov [rbp - 32], rdi
+    mov [rbp - 40], rsi
+    mov rax, [rbp - 32]
+    push rax
+    mov rax, [rbp - 40]
+    mov rbx, rax
+    pop rax
+    lea rax, [rax + rbx]
+    add rsp, 24
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+```
+
+```bcb
+// main.bcb
+<outtype: linux64>
+import "lib.s" asmf;
+
+// Declare the function signature for the assembly function
+define sum(a: int32, b: int32) -> int32;
+
+export main(void) -> int32 {
+    int32 result = call sum(int32 10, int32 20);
+    call printf(string "Sum: %d\n", int32 result);
+    return int32 0;
+}
+```
+
+**Key Points:**
+- The assembly code is included verbatim in the output `.s` file
+- You must declare function signatures with `define` for any assembly functions you call
+- The `.intel_syntax noprefix` directive is automatically stripped (BCB already emits it)
+- Assembly imports are placed in the `.text` section before generated BCB functions
 
 ---
 
